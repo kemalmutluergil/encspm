@@ -1,0 +1,12 @@
+%%MatrixMarket matrix coordinate real general
+% Sample 5x5 sparse matrix
+5 5 9
+1 1 10.0
+1 3 2.5
+2 2 5.0
+2 5 1.2
+3 1 3.3
+3 3 7.1
+4 4 4.0
+5 2 6.5
+5 3 7.2
