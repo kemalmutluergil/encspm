@@ -2,6 +2,7 @@
 #include "csr.hpp"
 #include "rcm.hpp"
 #include "chunk.hpp"
+#include "gorder.hpp"
 
 #include <map>
 #include <unordered_set>
@@ -50,7 +51,6 @@ Ciphertext hs_csr_mult(const CSRMatrix& A, vector<double> x_plain, int slot_coun
 
     vector<Ciphertext> ct_diagonals;
     vector<Plaintext> pt_rotated_xes;
-
     for (size_t i = 0; i < pt_diagonal_values.size(); i++) {
         if (pt_diagonal_values[i].size() == 0) continue;
 
@@ -67,15 +67,12 @@ Ciphertext hs_csr_mult(const CSRMatrix& A, vector<double> x_plain, int slot_coun
         encoder.encode(rotate_left(x_plain, i), scale, pt_x_rot);
         pt_rotated_xes.push_back(pt_x_rot);
     }
-
     for (size_t i = 0; i < ct_diagonals.size(); i++) {
         evaluator.multiply_plain_inplace(ct_diagonals[i], pt_rotated_xes[i]);
     }
-
     // sum all ct_diagonals together
     Ciphertext ct_result;
     evaluator.add_many(ct_diagonals, ct_result);
-
     return ct_result;
 
 }
@@ -105,7 +102,7 @@ int main(int argc, char* argv[]) {
     
     CSRMatrix A = read_mm(argv[1]);
 
-    // visualize_csr(A);
+    visualize_csr(A);
 
     std::cout << "Read matrix...\n";
     std::cout << "Rows: " << A.rows << ", Cols: " << A.cols << ", Non-zeros: " << A.values.size() << std::endl;
@@ -173,10 +170,45 @@ int main(int argc, char* argv[]) {
                     best_col_perm = col_perm;
                 }
             }
+            A_perm = permute(A, best_row_perm, best_col_perm);
+        } else if (order_id == 2) {
+            if(argc < 4) {
+                std::cout << "Window size is required\n" << std::endl;
+                exit(1);
+            }
+
+            int window_size = atoi(argv[3]);
+
+            if(m != n) {
+                CSRMatrix B = build_bipartite_sym(A);
+                CSRMatrix Bt = build_transpose(B);
+                auto perm = gorder(B, Bt, window_size);
+            
+                for (auto p : perm) {
+                    if (p < m) {
+                        row_perm.push_back(p);
+                    } else {
+                        col_perm.push_back(p - m);
+                    }
+                }
+            } else { 
+                CSRMatrix B = build_sym(A);
+                CSRMatrix Bt = build_transpose(B);
+
+                auto perm = gorder(B, Bt, window_size);
+
+                for (auto p : perm) {
+                    row_perm.push_back(p);
+                    col_perm.push_back(p);
+                }
+            }
+            A_perm = permute(A, row_perm, col_perm);
+            best_row_perm = row_perm;
+            best_col_perm = col_perm;
         }
-        A_perm = permute(A, best_row_perm, best_col_perm);
         
-        // visualize_csr(A_perm);
+        
+        visualize_csr(A_perm);
         // print_csr_info(A_perm);
 
         // cout << "col perm: ";
