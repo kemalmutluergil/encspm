@@ -1,4 +1,16 @@
+RCM and GOrder do roughly the same job when it comes to accomodating HS diagonals. 
+Current dummy implementation takes 2 seconds for 256x256 matrix using N = 8192. Note that normally this would mean 32 computations at the same time.
+
+# TODO:
+- Fix the issues with square matrices of larger size
+- Optimize `hs_mul` to use ciphertext slots efficiently
+- Accomodate matrices of size larger than $N$
+- Devise a way to tailor permutation specifically for HS diagonals
+
+# Notes 
+
 The RCM ordering does not necessarily help us reduce the number of occupied HS diagonals. Example:
+
 $$
 A = \begin{bmatrix}
 10 & 0 & 2.5 & 0 & 0 \\
