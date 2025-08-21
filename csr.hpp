@@ -89,7 +89,6 @@ CSRMatrix read_mm(const std::string &filename) {
         }
     }
 
-    std::cout << "Matrix is symmetric: " << symmetric << std::endl;
     std::istringstream header(line);
     size_t M, N, NNZ;
     header >> M >> N >> NNZ;
