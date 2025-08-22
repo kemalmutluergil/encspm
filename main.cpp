@@ -145,6 +145,12 @@ int main(int argc, char* argv[]) {
         }
     } else {
         std::vector<size_t> best_row_perm, best_col_perm;
+        // initialize best_row_perm and best_col_perm
+        best_row_perm.resize(A.rows);
+        best_col_perm.resize(A.cols);
+        for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = i;
+        for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = i;
+
         const size_t m = A.rows, n = A.cols;
 
         if(order_id_int == 1) {   
@@ -173,14 +179,18 @@ int main(int argc, char* argv[]) {
             apply_HSOrder(A, best_row_perm, best_col_perm);
         } else if (order_id_int == 4) {
             hsorder_kemal(A, best_row_perm, best_col_perm);
-            std::cout << "Result permutation: ";
+            std::cout << "Result row permutation: ";
             for (size_t i = 0; i < A.rows; i++) {
                 std::cout << best_row_perm[i] << " ";
+            }
+            std::cout << std::endl << "Result col permutation: ";
+            for (size_t i = 0; i < A.rows; i++) {
+                std::cout << best_col_perm[i] << " ";
             }
             std::cout << std::endl;
         }
 
-        A_perm = permute_kemal(A, best_row_perm);
+        A_perm = permute_kemal(A, best_row_perm, best_col_perm);
         std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
 
         std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
