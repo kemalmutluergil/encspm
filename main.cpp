@@ -126,6 +126,7 @@ int main(int argc, char* argv[]) {
     }
 
     CSRMatrix A = read_mm(filename);
+    std::cout << "Initial diagonal count: " << count_nonempty_hs_diagonals(A) << std::endl;
 
     if (debug_mode) {
         std::cout << "Initial matrix: " << std::endl;
@@ -170,9 +171,19 @@ int main(int argc, char* argv[]) {
             }
         } else if (order_id_int == 3) {
             apply_HSOrder(A, best_row_perm, best_col_perm);
+        } else if (order_id_int == 4) {
+            hsorder_kemal(A, best_row_perm, best_col_perm);
+            std::cout << "Result permutation: ";
+            for (size_t i = 0; i < A.rows; i++) {
+                std::cout << best_row_perm[i] << " ";
+            }
+            std::cout << std::endl;
         }
 
-        A_perm = permute(A, best_row_perm, best_col_perm);
+        A_perm = permute_kemal(A, best_row_perm);
+        std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
+
+        std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
         if (debug_mode) {
             std::cout << "Permuted matrix: " << std::endl;
             visualize_csr(A_perm);
