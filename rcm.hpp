@@ -48,7 +48,74 @@ std::vector<size_t> compute_degrees(const CSRMatrix &A) {
     }
     return degrees;
 }
+void find_rcm_ordering(const CSRMatrix& A,
+                       std::vector<size_t>& row_perm,
+                       std::vector<size_t>& col_perm) 
+{
+    size_t n = A.rows;
+    row_perm.assign(n, std::numeric_limits<size_t>::max());
+    col_perm.assign(A.cols, std::numeric_limits<size_t>::max());
 
+    std::vector<bool> visited(n, false);
+    std::vector<size_t> degree(n, 0);
+
+    // compute degree of each row (number of nonzeros)
+    for (size_t i = 0; i < n; i++) {
+        degree[i] = A.row_ptr[i+1] - A.row_ptr[i];
+    }
+
+    std::vector<size_t> ordering;
+    ordering.reserve(n);
+
+    // BFS from the lowest degree node each time (RCM style)
+    for (size_t start = 0; start < n; start++) {
+        if (visited[start]) continue;
+
+        // BFS queue
+        std::queue<size_t> q;
+        q.push(start);
+        visited[start] = true;
+
+        std::vector<size_t> component;
+
+        while (!q.empty()) {
+            size_t u = q.front();
+            q.pop();
+            component.push_back(u);
+
+            // Collect neighbors
+            std::vector<size_t> neighbors;
+            for (size_t k = A.row_ptr[u]; k < A.row_ptr[u+1]; k++) {
+                size_t v = A.col_idx[k];
+                if (v < n && !visited[v]) { // assuming square or symmetric structure
+                    neighbors.push_back(v);
+                }
+            }
+
+            // Sort neighbors by degree before pushing
+            std::sort(neighbors.begin(), neighbors.end(),
+                      [&](size_t a, size_t b) { return degree[a] < degree[b]; });
+
+            for (size_t v : neighbors) {
+                if (!visited[v]) {
+                    visited[v] = true;
+                    q.push(v);
+                }
+            }
+        }
+
+        // Reverse component order (RCM trick)
+        std::reverse(component.begin(), component.end());
+        ordering.insert(ordering.end(), component.begin(), component.end());
+    }
+
+    // Build forward permutation (old -> new)
+    for (size_t new_idx = 0; new_idx < ordering.size(); new_idx++) {
+        size_t old_idx = ordering[new_idx];
+        row_perm[old_idx] = new_idx;
+        col_perm[old_idx] = new_idx; // same permutation for symmetric matrix
+    }
+}
 /**
  * @brief Performs the Reverse Cuthill-McKee ordering on a symmetric matrix.
  * @param A A symmetric sparse matrix.

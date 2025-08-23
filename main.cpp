@@ -155,6 +155,7 @@ int main(int argc, char* argv[]) {
 
         if(order_id_int == 1) {   
             apply_RCM(A, best_row_perm, best_col_perm);
+            A_perm = permute_kemal(A, best_row_perm, best_col_perm);
         } else if (order_id_int == 2) {
             int window_size = atoi(argv[argc - 1]);
 
@@ -174,11 +175,19 @@ int main(int argc, char* argv[]) {
                 // }
             } else { 
                 apply_GOrder(A, window_size, best_row_perm, best_col_perm);
+                A_perm = permute_kemal(A, best_row_perm, best_col_perm);
             }
         } else if (order_id_int == 3) {
             apply_HSOrder(A, best_row_perm, best_col_perm);
+            A_perm = permute_kemal(A, best_row_perm, best_col_perm);
         } else if (order_id_int == 4) {
-            hsorder_kemal(A, best_row_perm, best_col_perm);
+            rcm::find_rcm_ordering(A, best_row_perm, best_col_perm);
+            A_perm = permute_kemal(A, best_row_perm, best_col_perm);
+            visualize_csr(A_perm);
+            std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
+
+            
+            hsorder_kemal(A_perm, best_row_perm, best_col_perm);
             std::cout << "Result row permutation: ";
             for (size_t i = 0; i < A.rows; i++) {
                 std::cout << best_row_perm[i] << " ";
@@ -188,9 +197,10 @@ int main(int argc, char* argv[]) {
                 std::cout << best_col_perm[i] << " ";
             }
             std::cout << std::endl;
+            
+            A_perm = permute_kemal(A_perm, best_row_perm, best_col_perm);
         }
 
-        A_perm = permute_kemal(A, best_row_perm, best_col_perm);
         std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
 
         std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
@@ -201,7 +211,8 @@ int main(int argc, char* argv[]) {
 
         if (check_computations) {
             std::cout << "**********************************CKKS************************************\n";
-            if (check_multiplications(A, A_perm, best_row_perm, best_col_perm)) {
+            // TODO: change this to A_perm
+            if (check_multiplications(A, A, best_row_perm, best_col_perm)) {
                 std::cout << "Success: The results match!" << std::endl;
             } else {
                 std::cout << "Failed: The results do not match!" << std::endl;

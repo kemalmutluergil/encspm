@@ -76,6 +76,7 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
 void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm) {
     // number of nonzeros in each HS diagonal
     unsigned int num_nnz[A.rows] = {0};
+    unsigned int best_num_nnz[A.rows] = {0};
     
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -85,6 +86,7 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
     for (size_t row = 0; row < A.rows; row++) {
         for (size_t k = A.row_ptr[row]; k < A.row_ptr[row + 1]; k++) {
             num_nnz[(A.col_idx[k] + A.rows - row) % A.rows]++;
+            best_num_nnz[(A.col_idx[k] + A.rows - row) % A.rows]++;
         }
     }
 
@@ -93,8 +95,8 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
     for (size_t i = 0; i < A.rows; i++) current_row_perm[i] = i;
     for (size_t i = 0; i < A.cols; i++) current_col_perm[i] = i;
 
-    const unsigned int max_steps_without_gain = 20;
     const unsigned int max_steps_without_improvement = 500;
+    const unsigned int max_steps_without_gain = max_steps_without_improvement / 5;
     
     // TODO: use this for some sort of backtracking
     unsigned int steps_without_gain = 0;
@@ -111,7 +113,7 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
         int best_move_row0, best_move_row1, best_move_col0, best_move_col1;
 
         //TODO: This should be adaptive
-        const int max_r_iter = 10;
+        const int max_r_iter = std::max(A.rows, A.cols) * std::max(A.rows, A.cols) / 10;
         if (row_turn) {
             for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
                 // select 2 rows at random
@@ -266,8 +268,15 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
                 best_diagonal_count = current_diagonal_count;
                 std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
                 std::copy(current_col_perm.begin(), current_col_perm.end(), best_col_perm.begin());
+                std::copy(num_nnz, num_nnz + A.rows, best_num_nnz);
                 steps_without_improvement = 0;
-            } else steps_without_improvement++;            
+            } else if (steps_without_gain > max_steps_without_gain) {
+                std::cout << "Backtracking..." << std::endl;
+                std::copy(best_row_perm.begin(), best_row_perm.end(), current_row_perm.begin());
+                std::copy(best_col_perm.begin(), best_col_perm.end(), current_col_perm.begin());
+                std::copy(best_num_nnz, best_num_nnz + A.rows, num_nnz);
+                steps_without_gain = 0;
+            } else steps_without_improvement++;
 
             // // print debug info
             // std::cout << "Current diagonal count: " << current_diagonal_count << std::endl;
@@ -287,18 +296,9 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
         }
     }
     std::cout << "HSOrder complete. Active diagonals: " << best_diagonal_count << "/" << A.rows << std::endl;
-    std::vector<size_t> final_row_perm(A.rows);
-    std::vector<size_t> final_col_perm(A.cols);
-
-    // copy best row and col perm to the output
-    for (size_t i = 0; i < A.rows; i++) {
-        final_row_perm[i] = best_row_perm[row_perm[i]];
-    }
-    for (size_t i = 0; i < A.cols; i++) {
-        final_col_perm[i] = best_col_perm[col_perm[i]];
-    }
-    std::copy(final_row_perm.begin(), final_row_perm.end(), row_perm.begin());
-    std::copy(final_col_perm.begin(), final_col_perm.end(), col_perm.begin());
+    
+    std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
+    std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
 }
 
 CSRMatrix permute_kemal(const CSRMatrix& A, const std::vector<size_t>& row_perm, const std::vector<size_t>& col_perm) {
