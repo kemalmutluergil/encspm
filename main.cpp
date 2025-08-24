@@ -181,24 +181,25 @@ int main(int argc, char* argv[]) {
             apply_HSOrder(A, best_row_perm, best_col_perm);
             A_perm = permute_kemal(A, best_row_perm, best_col_perm);
         } else if (order_id_int == 4) {
-            rcm::find_rcm_ordering(A, best_row_perm, best_col_perm);
-            A_perm = permute_kemal(A, best_row_perm, best_col_perm);
+            std::vector<size_t> rcm_row_perm(A.rows), rcm_col_perm(A.cols), hs_row_perm(A.rows), hs_col_perm(A.cols);
+            for (size_t i = 0; i < A.rows; i++) {
+                rcm_row_perm[i] = i;
+                hs_row_perm[i] = i;
+            }
+            for (size_t i = 0; i < A.cols; i++) {
+                rcm_col_perm[i] = i;
+                hs_col_perm[i] = i;
+            }
+            rcm::find_rcm_ordering(A, rcm_row_perm, rcm_col_perm);
+            A_perm = permute_kemal(A, rcm_row_perm, rcm_col_perm);
             visualize_csr(A_perm);
             std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
 
+            hsorder_kemal(A_perm, hs_row_perm, hs_col_perm);
+            for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[rcm_row_perm[i]];
+            for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[rcm_col_perm[i]];            
             
-            hsorder_kemal(A_perm, best_row_perm, best_col_perm);
-            std::cout << "Result row permutation: ";
-            for (size_t i = 0; i < A.rows; i++) {
-                std::cout << best_row_perm[i] << " ";
-            }
-            std::cout << std::endl << "Result col permutation: ";
-            for (size_t i = 0; i < A.rows; i++) {
-                std::cout << best_col_perm[i] << " ";
-            }
-            std::cout << std::endl;
-            
-            A_perm = permute_kemal(A_perm, best_row_perm, best_col_perm);
+            A_perm = permute_kemal(A_perm, hs_row_perm, hs_col_perm);
         }
 
         std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
@@ -211,8 +212,7 @@ int main(int argc, char* argv[]) {
 
         if (check_computations) {
             std::cout << "**********************************CKKS************************************\n";
-            // TODO: change this to A_perm
-            if (check_multiplications(A, A, best_row_perm, best_col_perm)) {
+            if (check_multiplications(A, A_perm, best_row_perm, best_col_perm)) {
                 std::cout << "Success: The results match!" << std::endl;
             } else {
                 std::cout << "Failed: The results do not match!" << std::endl;

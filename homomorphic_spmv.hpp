@@ -63,13 +63,7 @@ vector<Ciphertext> hs_chunks_mult(const vector<chunk_kemal>& chunks, vector<doub
 
             for (size_t j = start; j <= end; j++) {
                 packed_values.insert(packed_values.end(), chunks[j].values.begin(), chunks[j].values.end());
-                std::cout << "processing chunk with index: " << chunks[j].index << std::endl;
-                std::cout << "x plain: ";
-                for (auto val: x_plain) std::cout << val << " ";
-                std::cout << std::endl << "Rotated x: ";
                 std::vector<double> rotated_x = rotate_left(x_plain, chunks[j].index);
-                for (auto val: rotated_x) std::cout << val << " ";
-                std::cout << std::endl;
                 packed_x.insert(packed_x.end(), rotated_x.begin(), rotated_x.end());
             }
             packed_values.resize(slot_count, 0.0); // pad with zeros
@@ -210,9 +204,11 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
     }
 
     std::vector<double> permuted_x(features_x.size());
+    std::vector<double> inv_col_perm(best_col_perm.size());
     for (size_t i = 0; i < best_col_perm.size(); ++i) {
-        permuted_x[i] = features_x[best_col_perm[i]];
+        inv_col_perm[best_col_perm[i]] = i;
     }
+    for (size_t i = 0; i < inv_col_perm.size(); i++) permuted_x[i] = features_x[inv_col_perm[i]];
 
     size_t poly_modulus_degree = 8192;
     double scale = pow(2.0, 40);
@@ -237,9 +233,8 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
     size_t slot_count = encoder.slot_count();
 
     auto hs_start = chrono::high_resolution_clock::now();
-    std::vector<chunk_kemal> chunks = chunkify_csr(A);
-    //TODO: change this to permuted_x
-    vector<Ciphertext> ct_result = hs_chunks_mult(chunks, features_x, slot_count, encryptor, evaluator, encoder, gal_keys, scale, decryptor);
+    std::vector<chunk_kemal> chunks = chunkify_csr(A_perm);
+    vector<Ciphertext> ct_result = hs_chunks_mult(chunks, permuted_x, slot_count, encryptor, evaluator, encoder, gal_keys, scale, decryptor);
     auto hs_end = chrono::high_resolution_clock::now();
     auto hs_dur = chrono::duration_cast<chrono::milliseconds>(hs_end - hs_start).count();
     std::cout << "Homomorphic mult duration: " << hs_dur << " milliseconds" << std::endl;
@@ -249,15 +244,7 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
     Plaintext temp_pt;
     decryptor.decrypt(ct_result[0], temp_pt);
     encoder.decode(temp_pt, temp_vec);
-    std::cout << "Results of the ct: ";
-    for (size_t i = 0; i < 12*16; i++) {
-        std::cout << temp_vec[i] << " ";
-    }
-    std::cout << std::endl;
 
-    double acc = 0;
-    for (size_t i = 0; i < 12*16; i += 16) acc += temp_vec[i];
-    std::cout << "First entry: " << acc << std::endl;
     if (chunks[0].values.size() > slot_count) {
 
     } else if (chunks[0].values.size() <= slot_count / 2) {
@@ -268,15 +255,12 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
         while (pow2_2 < chunks.size()) pow2_2 *= 2;
         pack_num = min(largest_pow2, pow2_2);
 
-        std::cout << "pack_num: " << pack_num << std::endl;
-
         Ciphertext sum_res;
         evaluator.add_many(ct_result, sum_res);
 
         size_t j = 1;
         for (size_t i = 1; i < pack_num; i *= 2) {
             int offset = chunks[0].values.size() * j;
-            std::cout << "Offset: " << offset << std::endl;
             Ciphertext rotated;
             evaluator.rotate_vector(sum_res, offset, gal_keys, rotated);
             evaluator.add_inplace(sum_res, rotated);
@@ -286,10 +270,6 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
         Plaintext res;
         decryptor.decrypt(sum_res, res);
         encoder.decode(res, res_vec);
-
-        for (int i = 0; i < y.size(); i++) {
-            cout << "y[" << i << "] = " << y[i] << ", res_vec[" << i << "] = " << res_vec[i] << endl;
-        }
     } else {
 
     }
@@ -302,11 +282,10 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
     for (size_t j = 0; j < best_row_perm.size(); j++) {
         inv_row_perm[best_row_perm[j]] = j;
     }
-    for (size_t i = 0; i < best_row_perm.size(); ++i) permuted_result[i] = res_vec[inv_row_perm[i]];
+    for (size_t old = 0; old < best_row_perm.size(); ++old) permuted_result[old] = res_vec[best_row_perm[old]];
 
-    permuted_result.resize(A.cols);
-    res_vec.resize(y.size());
-    if (approx_equal(res_vec, y)) {
+    permuted_result.resize(y.size());
+    if (approx_equal(permuted_result, y)) {
         return true;
     } else {
         return false;
