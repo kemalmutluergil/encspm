@@ -57,12 +57,14 @@ bool approx_equal(const std::vector<double>& a, const std::vector<double>& b, do
     return true;
 }
 
-vector<double> rotate_left(std::vector<double> v, size_t i) {
-    if (v.empty()) return v;
-    i = i % v.size(); // handle i >= v.size()
-    std::rotate(v.begin(), v.begin() + i, v.end());
-    return v;
+vector<double> rotate_left(const vector<double>& v, size_t i) {
+    if (v.empty()) return {};
+    i = i % v.size();
+    vector<double> out(v.size());
+    std::rotate_copy(v.begin(), v.begin() + i, v.end(), out.begin());
+    return out;
 }
+
 
 // Helper: compute wraparound diagonal index
 size_t diag_index(size_t r, size_t c, size_t n) {
@@ -71,12 +73,20 @@ size_t diag_index(size_t r, size_t c, size_t n) {
 
 static inline vector<double> slice_and_pad(const vector<double>& v,
                                            size_t start, size_t len, size_t slot_count) {
+    if (start >= v.size())
+        return vector<double>(slot_count, 0.0);
+
     vector<double> out;
     out.reserve(slot_count);
-    for (size_t k = 0; k < min(len, v.size() - start); ++k) out.push_back(v[start + k]);
-    if (out.size() < (size_t)slot_count) out.resize(slot_count, 0.0);
+    for (size_t k = 0; k < std::min(len, v.size() - start); ++k)
+        out.push_back(v[start + k]);
+
+    if (out.size() < slot_count)
+        out.resize(slot_count, 0.0);
+
     return out;
 }
+
 
 /// Decrypts the packed SpMV result, compares to y_expected, and reports errors.
 // void checkSpMVResult(

@@ -35,19 +35,6 @@ struct DistributionStats {
 namespace rcm {
 
 // --- Core RCM and Helper Functions ---
-
-/**
- * @brief Computes the degree of each node (row) in the graph representation of the matrix.
- * @param A The input sparse matrix.
- * @return A vector containing the degree of each row.
- */
-std::vector<size_t> compute_degrees(const CSRMatrix &A) {
-    std::vector<size_t> degrees(A.rows);
-    for (size_t i = 0; i < A.rows; ++i) {
-        degrees[i] = A.row_ptr[i + 1] - A.row_ptr[i];
-    }
-    return degrees;
-}
 void find_rcm_ordering(const CSRMatrix& A,
                        std::vector<size_t>& row_perm,
                        std::vector<size_t>& col_perm) 
@@ -116,72 +103,30 @@ void find_rcm_ordering(const CSRMatrix& A,
         col_perm[old_idx] = new_idx; // same permutation for symmetric matrix
     }
 }
-/**
- * @brief Performs the Reverse Cuthill-McKee ordering on a symmetric matrix.
- * @param A A symmetric sparse matrix.
- * @return The inverse permutation vector P_inv (new_idx -> old_idx).
- */
-std::vector<size_t> rcm_ordering(const CSRMatrix &A) {
-    size_t n = A.rows;
-    auto degrees = compute_degrees(A);
-    std::vector<bool> visited(n, false);
-    std::vector<size_t> ordering;
-
-    for (size_t i = 0; i < n; ++i) {
-        if (visited[i]) continue;
-        size_t start_node = find_pseudo_peripheral_node(A, i);
-
-        std::queue<size_t> q;
-        q.push(start_node);
-        visited[start_node] = true;
-
-        while (!q.empty()) {
-            size_t u = q.front(); q.pop();
-            ordering.push_back(u);
-            
-            std::vector<size_t> neighbors;
-            for (size_t k = A.row_ptr[u]; k < A.row_ptr[u + 1]; ++k) {
-                neighbors.push_back(A.col_idx[k]);
-            }
-
-            std::sort(neighbors.begin(), neighbors.end(),
-                      [&](size_t a, size_t b) { return degrees[a] < degrees[b]; });
-
-            for (auto v : neighbors) {
-                if (!visited[v]) {
-                    visited[v] = true;
-                    q.push(v);
-                }
-            }
-        }
-    }
-    std::reverse(ordering.begin(), ordering.end());
-    return ordering;
-}
 
 /**
  * @brief Applies RCM to a rectangular matrix.
  * @param[out] row_P_inv The calculated row permutation (new->old).
  * @param[out] col_P_inv The calculated column permutation (new->old).
  */
-void rcm_rectangular(const CSRMatrix &A,
-                     std::vector<size_t> &row_P_inv,
-                     std::vector<size_t> &col_P_inv) {
-    CSRMatrix B = build_bipartite_sym(A);
-    auto P_inv = rcm_ordering(B);
+// void rcm_rectangular(const CSRMatrix &A,
+//                      std::vector<size_t> &row_P_inv,
+//                      std::vector<size_t> &col_P_inv) {
+//     CSRMatrix B = build_bipartite_sym(A);
+//     auto P_inv = rcm_ordering(B);
     
-    row_P_inv.clear();
-    col_P_inv.clear();
+//     row_P_inv.clear();
+//     col_P_inv.clear();
     
-    size_t m = A.rows;
-    for (auto p : P_inv) {
-        if (p < m) {
-            row_P_inv.push_back(p);
-        } else {
-            col_P_inv.push_back(p - m);
-        }
-    }
-}
+//     size_t m = A.rows;
+//     for (auto p : P_inv) {
+//         if (p < m) {
+//             row_P_inv.push_back(p);
+//         } else {
+//             col_P_inv.push_back(p - m);
+//         }
+//     }
+// }
 
 // --- Performance Metrics ---
 

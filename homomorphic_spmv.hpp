@@ -43,7 +43,30 @@ vector<Ciphertext> hs_chunks_mult(const vector<chunk_kemal>& chunks, vector<doub
                                     CKKSEncoder& encoder, GaloisKeys& gal_keys, double scale, Decryptor& decryptor) {
     if (chunks.size() == 0) return vector<Ciphertext>();
     if (chunks[0].values.size() > slot_count) {
+        size_t num_ct_per_chunk = (chunks[0].values.size() + slot_count - 1) / slot_count;
 
+        vector<Ciphertext> res;
+        for (size_t i = 0; i < chunks.size(); i++) {
+            std::vector<double> rotated_x = rotate_left(x_plain, chunks[i].index);
+
+            for (size_t j = 0; j < num_ct_per_chunk; j++) {
+                size_t start = j * slot_count;
+
+                std::vector<double> vec_values = slice_and_pad(chunks[i].values, start, slot_count, slot_count);
+                std::vector<double> vec_x = slice_and_pad(rotated_x, start, slot_count, slot_count);
+
+                Plaintext pt_chunk, pt_x;
+                encoder.encode(vec_values, scale, pt_chunk);
+                encoder.encode(vec_x, scale, pt_x);
+
+                Ciphertext ct_chunk;
+                encryptor.encrypt(pt_chunk, ct_chunk);
+
+                evaluator.multiply_plain_inplace(ct_chunk, pt_x);
+                res.push_back(ct_chunk);
+            }
+        }
+        return res;
     } else if (chunks[0].values.size() <= slot_count / 2) {
         size_t pack_num = slot_count / chunks[0].values.size();
         size_t largest_pow2 = 1;
@@ -105,88 +128,6 @@ vector<Ciphertext> hs_chunks_mult(const vector<chunk_kemal>& chunks, vector<doub
     }
 }
 
-vector<Ciphertext> hs_csr_mult(const CSRMatrix& A, vector<double> x_plain, int slot_count,
-                 Encryptor& encryptor, Evaluator& evaluator, CKKSEncoder& encoder,
-                 GaloisKeys& gal_keys, double scale) {
-    vector<Plaintext> pt_diagonals(A.cols);
-    vector<vector<double>> pt_diagonal_values(A.cols);
-    
-    for (size_t r = 0; r < A.rows; r++) {
-        for (size_t idx = A.row_ptr[r]; idx < A.row_ptr[r+1]; idx++) {
-            int diag_idx = diag_index(r, A.col_idx[idx], A.rows);
-            // Pad with zeros until the vector's size is r
-            while (pt_diagonal_values[diag_idx].size() < r) {
-                pt_diagonal_values[diag_idx].push_back(0.0);
-            }
-            pt_diagonal_values[diag_idx].push_back(A.values[idx]);
-        }
-    }
-
-    for (size_t i = 0; i < pt_diagonal_values.size(); i++) {
-        if (pt_diagonal_values[i].size() == 0) continue;
-        // Pad with zeros until the vector's size is slot_count
-        pt_diagonal_values[i].resize(slot_count, 0.0);
-    }
-
-    if (A.rows > slot_count) {
-        size_t num_chunks = (A.rows + slot_count - 1) / slot_count; // ceil(A.rows / slot_count)
-        vector<Ciphertext> ct_results;
-
-        for (size_t start = 0; start < A.rows; start += slot_count) {
-            vector<Ciphertext> ct_diagonal_chunks;
-            vector<Plaintext> pt_rotated_x_chunks;
-
-            for (size_t i = 0; i < pt_diagonal_values.size(); i++) {
-                if (pt_diagonal_values[i].size() == 0) continue;
-                vector<double> diagonal_chunk = slice_and_pad(pt_diagonal_values[i], start, slot_count, slot_count);
-                vector<double> rot_x = slice_and_pad(rotate_left(x_plain, i), start, slot_count, slot_count);
-                Plaintext pt_x_rot, pt_diag;
-                Ciphertext ct_diag;
-                encoder.encode(rot_x, scale, pt_x_rot);
-                encoder.encode(diagonal_chunk, scale, pt_diag);
-                encryptor.encrypt(pt_diag, ct_diag);
-                ct_diagonal_chunks.push_back(ct_diag);
-                pt_rotated_x_chunks.push_back(pt_x_rot);
-            }
-            for (size_t i = 0; i < ct_diagonal_chunks.size(); i++) {
-                evaluator.multiply_plain_inplace(ct_diagonal_chunks[i], pt_rotated_x_chunks[i]);
-            }
-            Ciphertext ct_result;
-            evaluator.add_many(ct_diagonal_chunks, ct_result);
-            ct_results.push_back(ct_result);
-        }
-
-        return ct_results;
-        
-    } else {
-        vector<Ciphertext> ct_diagonals;
-        vector<Plaintext> pt_rotated_xes;
-        for (size_t i = 0; i < pt_diagonal_values.size(); i++) {
-            if (pt_diagonal_values[i].size() == 0) continue;
-
-            encoder.encode(pt_diagonal_values[i], scale, pt_diagonals[i]);
-            Ciphertext ct;
-            encryptor.encrypt(pt_diagonals[i], ct);
-            ct_diagonals.push_back(ct);
-            // rotate x_plain vector i steps to the left cyclically
-            vector<double> rot_x = rotate_left(x_plain, i);
-            Plaintext pt_x_rot;
-            encoder.encode(rot_x, scale, pt_x_rot);
-            pt_rotated_xes.push_back(pt_x_rot);
-        }
-        for (size_t i = 0; i < ct_diagonals.size(); i++) {
-            evaluator.multiply_plain_inplace(ct_diagonals[i], pt_rotated_xes[i]);
-        }
-        // sum all ct_diagonals together
-        Ciphertext ct_result;
-        evaluator.add_many(ct_diagonals, ct_result);
-
-        vector<Ciphertext> result(1, ct_result);
-        return result;
-    }
-
-}
-
 bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const std::vector<size_t>& best_row_perm, const std::vector<size_t>& best_col_perm) {
     std::vector<double> features_x(A.cols);
     for (size_t i = 0; i < A.cols; ++i) {
@@ -241,12 +182,22 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
     vector<double> res_vec;
 
     vector<double> temp_vec;
-    Plaintext temp_pt;
-    decryptor.decrypt(ct_result[0], temp_pt);
-    encoder.decode(temp_pt, temp_vec);
 
     if (chunks[0].values.size() > slot_count) {
+        size_t num_ct_per_chunk = (chunks[0].values.size() + slot_count - 1) / slot_count;
 
+        for (size_t i = 0; i < num_ct_per_chunk; i++) {
+            Ciphertext sum_result = ct_result[i];
+            for (size_t j = i + num_ct_per_chunk; j < ct_result.size(); j+=num_ct_per_chunk) {
+                evaluator.add_inplace(sum_result, ct_result[j]);
+            }
+            std::vector<double> temp_vec;
+            Plaintext pt_temp;
+            decryptor.decrypt(sum_result, pt_temp);
+            encoder.decode(pt_temp, temp_vec);
+
+            res_vec.insert(res_vec.end(), temp_vec.begin(), temp_vec.end());
+        }
     } else if (chunks[0].values.size() <= slot_count / 2) {
         size_t pack_num = slot_count / chunks[0].values.size();
         size_t largest_pow2 = 1;
@@ -271,23 +222,23 @@ bool check_multiplications(const CSRMatrix& A, const CSRMatrix& A_perm, const st
         decryptor.decrypt(sum_res, res);
         encoder.decode(res, res_vec);
     } else {
-
+        Ciphertext sum_res;
+        evaluator.add_many(ct_result, sum_res);
+        Plaintext pt_temp;
+        decryptor.decrypt(sum_res, pt_temp);
+        encoder.decode(pt_temp, res_vec);
     }
-           
-
 
     vector<double> permuted_result(res_vec.size());
-    // Inverse row permutation
-    std::vector<size_t> inv_row_perm(best_row_perm.size());
-    for (size_t j = 0; j < best_row_perm.size(); j++) {
-        inv_row_perm[best_row_perm[j]] = j;
-    }
     for (size_t old = 0; old < best_row_perm.size(); ++old) permuted_result[old] = res_vec[best_row_perm[old]];
 
     permuted_result.resize(y.size());
     if (approx_equal(permuted_result, y)) {
         return true;
     } else {
+        for (size_t i = 0; i < std::min(y.size(), static_cast<size_t>(150)); i++) {
+            std::cout << "y[" << i << "] = " << y[i] << ", res[" << i << "] = " << permuted_result[i] << std::endl;
+        }
         return false;
     }
 }
