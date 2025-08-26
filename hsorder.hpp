@@ -9,14 +9,470 @@ using namespace std;
 #include "utils.hpp"
 #include <climits>
 
+void update_perm_by_move(std::vector<size_t>& perm, size_t row_to_move, size_t new_pos) {
+    if (row_to_move < new_pos) {
+        for (size_t i = 0; i < perm.size(); i++) {
+            if (perm[i] == row_to_move) perm[i] = new_pos;
+            else if (perm[i] > row_to_move && perm[i] <= new_pos) perm[i]--;
+        }
+    } else {
+        for (size_t i = 0; i < perm.size(); i++) {
+            if (perm[i] == row_to_move) perm[i] = new_pos;
+            else if (perm[i] < row_to_move && perm[i] >= new_pos) perm[i]++;
+        }
+
+    }
+}
+
+void find_and_execute_move_move(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm,
+                                unsigned int* num_nnz, int& best_move_gain, unsigned int& current_diagonal_count, 
+                                unsigned int& steps_without_gain, bool &row_turn) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> row_dist(0, A.rows - 1);
+    std::uniform_int_distribution<> col_dist(0, A.cols - 1);
+
+    size_t best_move_col, best_move_row, best_move_new_pos;
+
+    const int max_r_iter = std::min(static_cast<size_t>(500), std::max(A.rows, A.cols));
+    if (row_turn) {
+        for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
+            size_t row = row_dist(gen);
+            size_t new_pos = row_dist(gen);
+
+            while (new_pos == row) new_pos = row_dist(gen);
+
+            // std::cout << "Simulating moving row " << row << " to position " << new_pos << std::endl;
+
+            int gain = 0;
+            int loss = 0;
+
+            std::vector<size_t> inv_row_perm(A.rows);
+            for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
+
+            int num_nnz_copy[A.rows];
+            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+            
+            for (size_t k = A.row_ptr[inv_row_perm[row]]; k < A.row_ptr[inv_row_perm[row] + 1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                size_t new_diag_idx = (new_col_idx + A.rows - new_pos) % A.rows;
+                size_t old_diag_idx = (new_col_idx + A.rows - row) % A.rows;
+
+                num_nnz_copy[new_diag_idx]++;
+                num_nnz_copy[old_diag_idx]--;
+
+                if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                if (num_nnz_copy[old_diag_idx] == 0) gain++;
+            }
+
+            if (row > new_pos) {
+                for (size_t current_row = new_pos; current_row < row; current_row++) {
+                    size_t old_row_idx = inv_row_perm[current_row];
+
+                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                        size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+
+                        num_nnz_copy[new_diag_idx]++;
+                        num_nnz_copy[old_diag_idx]--;
+
+                        if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                        if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                    }
+                }
+            } else {
+                for (size_t current_row = new_pos; current_row > row; current_row--) {
+                    size_t old_row_idx = inv_row_perm[current_row];
+
+                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                        size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                        num_nnz_copy[new_diag_idx]++;
+                        num_nnz_copy[old_diag_idx]--;
+
+                        if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                        if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                    }
+                }
+            }
+
+            int move_gain = gain - loss;
+
+            // only allow negative gain moves if we feel stuck
+            if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
+
+            if (move_gain > best_move_gain) {
+                best_move_gain = move_gain;
+                best_move_row = row;
+                best_move_new_pos = new_pos;
+            }
+        }
+    } else {
+        for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
+            size_t col = col_dist(gen);
+            size_t new_pos = col_dist(gen);
+
+            while (col == new_pos) new_pos = col_dist(gen);
+
+            int gain = 0;
+            int loss = 0;
+
+            int num_nnz_copy[A.rows];
+            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+
+            if (col > new_pos) {
+                for (size_t old_row = 0; old_row < A.rows; old_row++) {
+                    size_t new_row = current_row_perm[old_row];
+
+                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        if (new_col_idx == col) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (new_pos + A.rows - new_row) % A.rows;
+
+                            num_nnz_copy[old_diag_idx]--;
+                            num_nnz_copy[new_diag_idx]++;
+
+                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                        } else if (new_col_idx < col && new_col_idx >= new_pos) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                            num_nnz_copy[old_diag_idx]--;
+                            num_nnz_copy[new_diag_idx]++;
+
+                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                        }
+                    }
+                }
+            } else {
+                for (size_t old_row = 0; old_row < A.rows; old_row++) {
+                    size_t new_row = current_row_perm[old_row];
+
+                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        if (new_col_idx == col) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (new_pos + A.rows - new_row) % A.rows;
+
+                            num_nnz_copy[old_diag_idx]--;
+                            num_nnz_copy[new_diag_idx]++;
+
+                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                        } else if (new_col_idx > col && new_col_idx <= new_pos) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+                            
+                            num_nnz_copy[old_diag_idx]--;
+                            num_nnz_copy[new_diag_idx]++;
+
+                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                        }
+                    }
+                }
+            }
+            int move_gain = gain - loss;
+
+            // only allow negative gain moves if we feel stuck
+            if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
+
+            if (move_gain > best_move_gain) {
+                best_move_gain = move_gain;
+                best_move_col = col;
+                best_move_new_pos = new_pos;
+            }
+        }
+    }
+
+    if (best_move_gain == INT_MIN) {
+        std::cout << "No beneficial moves found." << std::endl;
+        return;
+    } else {
+        // if (row_turn) std::cout << "Best move gain: " << best_move_gain << " (Row " << best_move_row << " -> Row " << best_move_new_pos << ")" << std::endl;
+        // else std::cout << "Best move gain: " << best_move_gain << " (Col " << best_move_col << " -> Col " << best_move_new_pos << ")" << std::endl;
+
+        if (best_move_gain > 0) steps_without_gain = 0;
+        else steps_without_gain++;
+
+        current_diagonal_count -= best_move_gain;
+
+        std::vector<size_t> inv_row_perm(A.rows);
+        for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
+
+        if (row_turn) {
+            for (size_t k = A.row_ptr[inv_row_perm[best_move_row]]; k < A.row_ptr[inv_row_perm[best_move_row] + 1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                size_t new_diag_idx = (new_col_idx + A.rows - best_move_new_pos) % A.rows;
+                size_t old_diag_idx = (new_col_idx + A.rows - best_move_row) % A.rows;
+
+                num_nnz[new_diag_idx]++;
+                num_nnz[old_diag_idx]--;
+            }
+
+            if (best_move_row > best_move_new_pos) {
+                for (size_t current_row = best_move_new_pos; current_row < best_move_row; current_row++) {
+                    size_t old_row_idx = inv_row_perm[current_row];
+
+                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                        size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+
+                        num_nnz[new_diag_idx]++;
+                        num_nnz[old_diag_idx]--;
+                    }
+                }
+            } else {
+                for (size_t current_row = best_move_new_pos; current_row > best_move_row; current_row--) {
+                    size_t old_row_idx = inv_row_perm[current_row];
+
+                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                        size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                        num_nnz[new_diag_idx]++;
+                        num_nnz[old_diag_idx]--;
+                    }
+                }
+            }
+            
+            update_perm_by_move(current_row_perm, best_move_row, best_move_new_pos);
+        } else {
+            if (best_move_col > best_move_new_pos) {
+                for (size_t old_row = 0; old_row < A.rows; old_row++) {
+                    size_t new_row = current_row_perm[old_row];
+
+                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        if (new_col_idx == best_move_col) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (best_move_new_pos + A.rows - new_row) % A.rows;
+
+                            num_nnz[old_diag_idx]--;
+                            num_nnz[new_diag_idx]++;
+                        } else if (new_col_idx < best_move_col && new_col_idx >= best_move_new_pos) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                            num_nnz[old_diag_idx]--;
+                            num_nnz[new_diag_idx]++;
+                        }
+                    }
+                }
+            } else {
+                for (size_t old_row = 0; old_row < A.rows; old_row++) {
+                    size_t new_row = current_row_perm[old_row];
+
+                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                        if (new_col_idx == best_move_col) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (best_move_new_pos + A.rows - new_row) % A.rows;
+
+                            num_nnz[old_diag_idx]--;
+                            num_nnz[new_diag_idx]++;
+                        } else if (new_col_idx > best_move_col && new_col_idx <= best_move_new_pos) {
+                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                            size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+                            
+                            num_nnz[old_diag_idx]--;
+                            num_nnz[new_diag_idx]++;
+                        }
+                    }
+                }
+            }
+            
+            update_perm_by_move(current_col_perm, best_move_col, best_move_new_pos);
+        }
+    }
+    
+}
+
+void find_and_execute_swap_move(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm,
+                                unsigned int* num_nnz, int& best_move_gain, unsigned int& current_diagonal_count, 
+                                unsigned int& steps_without_gain, bool &row_turn) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> row_dist(0, A.rows - 1);
+    std::uniform_int_distribution<> col_dist(0, A.cols - 1);
+    size_t best_move_row0, best_move_row1, best_move_col0, best_move_col1;
+
+    //TODO: This should be adaptive
+    const int max_r_iter = std::min(static_cast<size_t>(500), A.values.size());
+    if (row_turn) {
+        for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
+            // select 2 rows at random
+            size_t row0 = row_dist(gen);
+            size_t row1 = row_dist(gen);
+            while (row1 == row0) row1 = row_dist(gen);
+
+            // LeaveGain_i := 1 if we make an HS diagonal fully vacant when row_i is removed from its place
+            // ArrivalLoss_i := 1 if we put a nonzero in a previously vacant HS diagonal by inserting row_i into j's place
+            int leave_gains = 0;
+            int arrival_losses = 0;
+
+            size_t idx_0, idx_1;
+            for (size_t i = 0; i < A.rows; i++) {
+                if (current_row_perm[i] == row0) idx_0 = i;
+                if (current_row_perm[i] == row1) idx_1 = i;
+            }
+
+            int num_nnz_copy[A.rows];
+            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+
+            for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
+                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 1) leave_gains++;
+                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]--;
+                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 0) arrival_losses++;
+                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]++;
+            }
+
+            for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1+1]; k++) {
+                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 1) leave_gains++;
+                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]--;
+                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 0) arrival_losses++;
+                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]++;
+            }
+
+            int move_gain = leave_gains - arrival_losses;
+
+            // only allow negative gain moves if we feel stuck
+            if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
+
+            if (move_gain > best_move_gain) {
+                best_move_gain = move_gain;
+                best_move_row0 = row0;
+                best_move_row1 = row1;
+            }
+        }
+    } else {
+        for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
+            size_t col0 = col_dist(gen);
+            size_t col1 = col_dist(gen);
+
+            while (col1 == col0) col1 = col_dist(gen);
+
+            int leave_gains = 0;
+            int arrival_losses = 0;
+
+            size_t idx_0, idx_1;
+            for (size_t i = 0; i < A.cols; i++) {
+                if (current_col_perm[i] == col0) idx_0 = i;
+                if (current_col_perm[i] == col1) idx_1 = i;
+            }
+            
+            int num_nnz_copy[A.rows];
+            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+
+            for (size_t row = 0; row < A.rows; row++) {
+                size_t new_row0 = current_row_perm[row];
+                size_t new_row1 = current_row_perm[row];
+
+                for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
+                    size_t idx = A.col_idx[k];
+                    if (idx == idx_0) {
+                        if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 1) leave_gains++;
+                        num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]--;
+                        if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 0) arrival_losses++;
+                        num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]++;
+                    } else if (idx == idx_1) {
+                        if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 1) leave_gains++;
+                        num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]--;
+                        if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 0) arrival_losses++;
+                        num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]++;
+                    }
+                }
+            }
+
+            int move_gain = leave_gains - arrival_losses;
+
+            // only allow negative gain moves if we feel stuck
+            if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
+
+            if (move_gain > best_move_gain) {
+                best_move_gain = move_gain;
+                best_move_col0 = col0;
+                best_move_col1 = col1;
+            }
+        }
+    }
+    if (best_move_gain == INT_MIN) {
+        std::cout << "No beneficial moves found." << std::endl;
+        return;
+    } else {
+        // if (row_turn) std::cout << "Best move gain: " << best_move_gain << " (Row " << best_move_row0 << " <-> Row " << best_move_row1 << ")" << std::endl;
+        // else std::cout << "Best move gain: " << best_move_gain << " (Col " << best_move_col0 << " <-> Col " << best_move_col1 << ")" << std::endl;
+        
+        if (best_move_gain > 0) steps_without_gain = 0;
+        else steps_without_gain++;
+
+        current_diagonal_count -= best_move_gain;
+
+        if (row_turn) {
+            size_t idx_0, idx_1;
+            for (size_t i = 0; i < A.rows; i++) {
+                if (current_row_perm[i] == best_move_row0) idx_0 = i;
+                if (current_row_perm[i] == best_move_row1) idx_1 = i;
+            }
+            std::swap(current_row_perm[idx_0], current_row_perm[idx_1]);
+
+            for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
+                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]--;
+                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]++;
+            }
+            for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1 + 1]; k++) {
+                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]--;
+                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]++;
+            }
+        } else {
+            size_t idx_0, idx_1;
+            for (size_t i = 0; i < A.cols; i++) {
+                if (current_col_perm[i] == best_move_col0) idx_0 = i;
+                if (current_col_perm[i] == best_move_col1) idx_1 = i;
+            }
+            std::swap(current_col_perm[idx_0], current_col_perm[idx_1]);
+
+            for (size_t row = 0; row < A.rows; row++) {
+                size_t new_row0 = current_row_perm[row];
+                size_t new_row1 = current_row_perm[row];
+
+                for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
+                    size_t idx = A.col_idx[k];
+                    if (idx == idx_0) {
+                        num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]--;
+                        num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]++;
+                    } else if (idx == idx_1) {
+                        num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]--;
+                        num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]++;
+                    }
+                }
+            }
+        }
+    }
+}
+
 void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm) {
     // number of nonzeros in each HS diagonal
     unsigned int num_nnz[A.rows] = {0};
     unsigned int best_num_nnz[A.rows] = {0};
-    
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dist(0, A.rows - 1);
 
     // initialize nonzero counts
     for (size_t row = 0; row < A.rows; row++) {
@@ -31,7 +487,7 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
     for (size_t i = 0; i < A.rows; i++) current_row_perm[i] = i;
     for (size_t i = 0; i < A.cols; i++) current_col_perm[i] = i;
 
-    const unsigned int max_steps_without_improvement = 500;
+    const unsigned int max_steps_without_improvement = 1000;
     const unsigned int max_steps_without_gain = max_steps_without_improvement / 5;
     
     // TODO: use this for some sort of backtracking
@@ -43,193 +499,55 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
     unsigned int best_diagonal_count = count_nonempty_hs_diagonals(A);
     unsigned int current_diagonal_count = best_diagonal_count;
 
+    // 0 -> swap
+    // 1 -> move
+    int move_type = 0;
     bool row_turn = true;
     while (steps_without_improvement < max_steps_without_improvement) {
         int best_move_gain = INT_MIN;
-        int best_move_row0, best_move_row1, best_move_col0, best_move_col1;
-
-        //TODO: This should be adaptive
-        const int max_r_iter = std::min(static_cast<size_t>(500), A.values.size());
-        if (row_turn) {
-            for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
-                // select 2 rows at random
-                size_t row0 = dist(gen);
-                size_t row1 = dist(gen);
-                while (row1 == row0) row1 = dist(gen);
-
-                // LeaveGain_i := 1 if we make an HS diagonal fully vacant when row_i is removed from its place
-                // ArrivalLoss_i := 1 if we put a nonzero in a previously vacant HS diagonal by inserting row_i into j's place
-                int leave_gains = 0;
-                int arrival_losses = 0;
-
-                size_t idx_0, idx_1;
-                for (size_t i = 0; i < A.rows; i++) {
-                    if (current_row_perm[i] == row0) idx_0 = i;
-                    if (current_row_perm[i] == row1) idx_1 = i;
-                }
-
-                int num_nnz_copy[A.rows];
-                std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
-
-                for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
-                    if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 1) leave_gains++;
-                    num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]--;
-                    if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 0) arrival_losses++;
-                    num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]++;
-                }
-
-                for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1+1]; k++) {
-                    if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 1) leave_gains++;
-                    num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]--;
-                    if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 0) arrival_losses++;
-                    num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]++;
-                }
-
-                int move_gain = leave_gains - arrival_losses;
-
-                // only allow negative gain moves if we feel stuck
-                if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
-
-                if (move_gain > best_move_gain) {
-                    best_move_gain = move_gain;
-                    best_move_row0 = row0;
-                    best_move_row1 = row1;
-                }
-            }
-        } else {
-            for (size_t r_iter = 0; r_iter < max_r_iter; r_iter++) {
-                size_t col0 = dist(gen);
-                size_t col1 = dist(gen);
-
-                while (col1 == col0) col1 = dist(gen);
-
-                int leave_gains = 0;
-                int arrival_losses = 0;
-
-                size_t idx_0, idx_1;
-                for (size_t i = 0; i < A.cols; i++) {
-                    if (current_col_perm[i] == col0) idx_0 = i;
-                    if (current_col_perm[i] == col1) idx_1 = i;
-                }
-                
-                int num_nnz_copy[A.rows];
-                std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
-
-                for (size_t row = 0; row < A.rows; row++) {
-                    size_t new_row0 = current_row_perm[row];
-                    size_t new_row1 = current_row_perm[row];
-
-                    for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
-                        size_t idx = A.col_idx[k];
-                        if (idx == idx_0) {
-                            if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 1) leave_gains++;
-                            num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]--;
-                            if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 0) arrival_losses++;
-                            num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]++;
-                        } else if (idx == idx_1) {
-                            if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 1) leave_gains++;
-                            num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]--;
-                            if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 0) arrival_losses++;
-                            num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]++;
-                        }
-                    }
-                }
-
-                int move_gain = leave_gains - arrival_losses;
-
-                // only allow negative gain moves if we feel stuck
-                if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
-
-                if (move_gain > best_move_gain) {
-                    best_move_gain = move_gain;
-                    best_move_col0 = col0;
-                    best_move_col1 = col1;
-                }
-            }
-        }
+        
+        if (move_type == 0) find_and_execute_swap_move(A, current_row_perm, current_col_perm, num_nnz, best_move_gain, current_diagonal_count, steps_without_gain, row_turn);
+        else find_and_execute_move_move(A, current_row_perm, current_col_perm, num_nnz, best_move_gain, current_diagonal_count, steps_without_gain, row_turn);
+        
         if (best_move_gain == INT_MIN) {
-            std::cout << "No beneficial moves found." << std::endl;
+            std::cout << "No beneficial moves found after " << move_type << ". Stopping..." << std::endl;
             break;
-        } else {
-            // if (row_turn) std::cout << "Best move gain: " << best_move_gain << " (Row " << best_move_row0 << " <-> Row " << best_move_row1 << ")" << std::endl;
-            // else std::cout << "Best move gain: " << best_move_gain << " (Col " << best_move_col0 << " <-> Col " << best_move_col1 << ")" << std::endl;
-            
-            if (best_move_gain > 0) steps_without_gain = 0;
-            else steps_without_gain++;
-
-            current_diagonal_count -= best_move_gain;
-
-            if (row_turn) {
-                size_t idx_0, idx_1;
-                for (size_t i = 0; i < A.rows; i++) {
-                    if (current_row_perm[i] == best_move_row0) idx_0 = i;
-                    if (current_row_perm[i] == best_move_row1) idx_1 = i;
-                }
-                std::swap(current_row_perm[idx_0], current_row_perm[idx_1]);
-
-                for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
-                    num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]--;
-                    num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]++;
-                }
-                for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1 + 1]; k++) {
-                    num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]--;
-                    num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]++;
-                }
-            } else {
-                size_t idx_0, idx_1;
-                for (size_t i = 0; i < A.cols; i++) {
-                    if (current_col_perm[i] == best_move_col0) idx_0 = i;
-                    if (current_col_perm[i] == best_move_col1) idx_1 = i;
-                }
-                std::swap(current_col_perm[idx_0], current_col_perm[idx_1]);
-
-                for (size_t row = 0; row < A.rows; row++) {
-                    size_t new_row0 = current_row_perm[row];
-                    size_t new_row1 = current_row_perm[row];
-
-                    for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
-                        size_t idx = A.col_idx[k];
-                        if (idx == idx_0) {
-                            num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]--;
-                            num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]++;
-                        } else if (idx == idx_1) {
-                            num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]--;
-                            num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]++;
-                        }
-                    }
-                }
-            }
-            
-            if (current_diagonal_count < best_diagonal_count) {
-                best_diagonal_count = current_diagonal_count;
-                std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
-                std::copy(current_col_perm.begin(), current_col_perm.end(), best_col_perm.begin());
-                std::copy(num_nnz, num_nnz + A.rows, best_num_nnz);
-                steps_without_improvement = 0;
-            } else if (steps_without_gain > max_steps_without_gain) {
-                std::cout << "Backtracking..." << std::endl;
-                std::copy(best_row_perm.begin(), best_row_perm.end(), current_row_perm.begin());
-                std::copy(best_col_perm.begin(), best_col_perm.end(), current_col_perm.begin());
-                std::copy(best_num_nnz, best_num_nnz + A.rows, num_nnz);
-                steps_without_gain = 0;
-            } else steps_without_improvement++;
-
-            // // print debug info
-            // std::cout << "Current diagonal count: " << current_diagonal_count << std::endl;
-            // std::cout << "Best diagonal count: " << best_diagonal_count << std::endl;
-            // std::cout << "Current col perm: ";
-            // for (size_t i = 0; i < A.cols; i++) {
-            //     std::cout << current_col_perm[i] << " ";
-            // }
-            // std::cout << std::endl;
-            // std::cout << "nnz array: ";
-            // for (size_t i = 0; i < A.rows; i++) {
-            //     std::cout << num_nnz[i] << " ";
-            // }
-            // std::cout << std::endl;
-
-            row_turn = !row_turn;
         }
+        
+        move_type = (move_type + 1) % 2;
+        if (current_diagonal_count < best_diagonal_count) {
+            best_diagonal_count = current_diagonal_count;
+            std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
+            std::copy(current_col_perm.begin(), current_col_perm.end(), best_col_perm.begin());
+            std::copy(num_nnz, num_nnz + A.rows, best_num_nnz);
+            steps_without_improvement = 0;
+        } else if (steps_without_gain > max_steps_without_gain) {
+            std::cout << "Backtracking..." << std::endl;
+            std::copy(best_row_perm.begin(), best_row_perm.end(), current_row_perm.begin());
+            std::copy(best_col_perm.begin(), best_col_perm.end(), current_col_perm.begin());
+            std::copy(best_num_nnz, best_num_nnz + A.rows, num_nnz);
+            steps_without_gain = 0;
+        } else steps_without_improvement++;
+
+        // // print debug info
+        // std::cout << "Current diagonal count: " << current_diagonal_count << std::endl;
+        // std::cout << "Best diagonal count: " << best_diagonal_count << std::endl;
+        // std::cout << "Current row perm: ";
+        // for (size_t i = 0; i < A.rows; i++) {
+        //     std::cout << current_row_perm[i] << " ";
+        // }
+        // std::cout << "Current col perm: ";
+        // for (size_t i = 0; i < A.cols; i++) {
+        //     std::cout << current_col_perm[i] << " ";
+        // }
+        // std::cout << std::endl;
+        // std::cout << "nnz array: ";
+        // for (size_t i = 0; i < A.rows; i++) {
+        //     std::cout << num_nnz[i] << " ";
+        // }
+        // std::cout << std::endl;
+
+        row_turn = !row_turn;
     }
     std::cout << "HSOrder complete. Active diagonals: " << best_diagonal_count << "/" << A.rows << std::endl;
     
