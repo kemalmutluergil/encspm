@@ -24,7 +24,352 @@ void update_perm_by_move(std::vector<size_t>& perm, size_t row_to_move, size_t n
     }
 }
 
-void find_and_execute_move_move(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm,
+void execute_move_row(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
+                      size_t best_move_row, size_t best_move_new_pos, unsigned int* num_nnz) {
+    std::vector<size_t> inv_row_perm(A.rows);
+    for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
+
+    for (size_t k = A.row_ptr[inv_row_perm[best_move_row]]; k < A.row_ptr[inv_row_perm[best_move_row] + 1]; k++) {
+        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+        size_t new_diag_idx = (new_col_idx + A.rows - best_move_new_pos) % A.rows;
+        size_t old_diag_idx = (new_col_idx + A.rows - best_move_row) % A.rows;
+
+        num_nnz[new_diag_idx]++;
+        num_nnz[old_diag_idx]--;
+    }
+
+    if (best_move_row > best_move_new_pos) {
+        for (size_t current_row = best_move_new_pos; current_row < best_move_row; current_row++) {
+            size_t old_row_idx = inv_row_perm[current_row];
+
+            for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+
+                num_nnz[new_diag_idx]++;
+                num_nnz[old_diag_idx]--;
+            }
+        }
+    } else {
+        for (size_t current_row = best_move_new_pos; current_row > best_move_row; current_row--) {
+            size_t old_row_idx = inv_row_perm[current_row];
+
+            for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                num_nnz[new_diag_idx]++;
+                num_nnz[old_diag_idx]--;
+            }
+        }
+    }
+    
+    update_perm_by_move(current_row_perm, best_move_row, best_move_new_pos);
+}
+
+void execute_move_col(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
+                      size_t best_move_col, size_t best_move_new_pos, unsigned int* num_nnz) {
+    if (best_move_col > best_move_new_pos) {
+        for (size_t old_row = 0; old_row < A.rows; old_row++) {
+            size_t new_row = current_row_perm[old_row];
+
+            for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                if (new_col_idx == best_move_col) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (best_move_new_pos + A.rows - new_row) % A.rows;
+
+                    num_nnz[old_diag_idx]--;
+                    num_nnz[new_diag_idx]++;
+                } else if (new_col_idx < best_move_col && new_col_idx >= best_move_new_pos) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                    num_nnz[old_diag_idx]--;
+                    num_nnz[new_diag_idx]++;
+                }
+            }
+        }
+    } else {
+        for (size_t old_row = 0; old_row < A.rows; old_row++) {
+            size_t new_row = current_row_perm[old_row];
+
+            for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                if (new_col_idx == best_move_col) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (best_move_new_pos + A.rows - new_row) % A.rows;
+
+                    num_nnz[old_diag_idx]--;
+                    num_nnz[new_diag_idx]++;
+                } else if (new_col_idx > best_move_col && new_col_idx <= best_move_new_pos) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+                    
+                    num_nnz[old_diag_idx]--;
+                    num_nnz[new_diag_idx]++;
+                }
+            }
+        }
+    }
+    
+    update_perm_by_move(current_col_perm, best_move_col, best_move_new_pos);
+}
+
+void execute_row_swap(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
+                      size_t best_move_row0, size_t best_move_row1, unsigned int* num_nnz) {
+    size_t idx_0, idx_1;
+    for (size_t i = 0; i < A.rows; i++) {
+        if (current_row_perm[i] == best_move_row0) idx_0 = i;
+        if (current_row_perm[i] == best_move_row1) idx_1 = i;
+    }
+    std::swap(current_row_perm[idx_0], current_row_perm[idx_1]);
+
+    for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
+        num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]--;
+        num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]++;
+    }
+    for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1 + 1]; k++) {
+        num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]--;
+        num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]++;
+    }
+}
+
+void execute_col_swap(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
+                      size_t best_move_col0, size_t best_move_col1, unsigned int* num_nnz) {
+    size_t idx_0, idx_1;
+    for (size_t i = 0; i < A.cols; i++) {
+        if (current_col_perm[i] == best_move_col0) idx_0 = i;
+        if (current_col_perm[i] == best_move_col1) idx_1 = i;
+    }
+    std::swap(current_col_perm[idx_0], current_col_perm[idx_1]);
+
+    for (size_t row = 0; row < A.rows; row++) {
+        size_t new_row0 = current_row_perm[row];
+        size_t new_row1 = current_row_perm[row];
+
+        for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
+            size_t idx = A.col_idx[k];
+            if (idx == idx_0) {
+                num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]--;
+                num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]++;
+            } else if (idx == idx_1) {
+                num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]--;
+                num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]++;
+            }
+        }
+    }
+}
+
+int compute_gain_col_swap(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
+                          unsigned int* num_nnz, size_t col0, size_t col1) {
+    int leave_gains = 0;
+    int arrival_losses = 0;
+
+    size_t idx_0, idx_1;
+    for (size_t i = 0; i < A.cols; i++) {
+        if (current_col_perm[i] == col0) idx_0 = i;
+        if (current_col_perm[i] == col1) idx_1 = i;
+    }
+    
+    int num_nnz_copy[A.rows];
+    std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+
+    for (size_t row = 0; row < A.rows; row++) {
+        size_t new_row0 = current_row_perm[row];
+        size_t new_row1 = current_row_perm[row];
+
+        for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
+            size_t idx = A.col_idx[k];
+            if (idx == idx_0) {
+                if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 1) leave_gains++;
+                num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]--;
+                if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 0) arrival_losses++;
+                num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]++;
+            } else if (idx == idx_1) {
+                if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 1) leave_gains++;
+                num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]--;
+                if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 0) arrival_losses++;
+                num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]++;
+            }
+        }
+    }
+
+    return leave_gains - arrival_losses;
+}
+
+int compute_gain_row_swap(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
+                          unsigned int* num_nnz, size_t row0, size_t row1) {
+    // LeaveGain_i := 1 if we make an HS diagonal fully vacant when row_i is removed from its place
+    // ArrivalLoss_i := 1 if we put a nonzero in a previously vacant HS diagonal by inserting row_i into j's place
+    int leave_gains = 0;
+    int arrival_losses = 0;
+
+    size_t idx_0, idx_1;
+    for (size_t i = 0; i < A.rows; i++) {
+        if (current_row_perm[i] == row0) idx_0 = i;
+        if (current_row_perm[i] == row1) idx_1 = i;
+    }
+
+    int num_nnz_copy[A.rows];
+    std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+
+    for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
+        if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 1) leave_gains++;
+        num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]--;
+        if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 0) arrival_losses++;
+        num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]++;
+    }
+
+    for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1+1]; k++) {
+        if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 1) leave_gains++;
+        num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]--;
+        if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 0) arrival_losses++;
+        num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]++;
+    }
+
+    return leave_gains - arrival_losses;
+}
+
+int compute_gain_displace_col(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
+                               unsigned int* num_nnz, size_t col, size_t new_pos) {
+    int gain = 0;
+    int loss = 0;
+
+    int num_nnz_copy[A.rows];
+    std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+
+    if (col > new_pos) {
+        for (size_t old_row = 0; old_row < A.rows; old_row++) {
+            size_t new_row = current_row_perm[old_row];
+
+            for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                if (new_col_idx == col) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (new_pos + A.rows - new_row) % A.rows;
+
+                    num_nnz_copy[old_diag_idx]--;
+                    num_nnz_copy[new_diag_idx]++;
+
+                    if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                    if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                } else if (new_col_idx < col && new_col_idx >= new_pos) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                    num_nnz_copy[old_diag_idx]--;
+                    num_nnz_copy[new_diag_idx]++;
+
+                    if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                    if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                }
+            }
+        }
+    } else {
+        for (size_t old_row = 0; old_row < A.rows; old_row++) {
+            size_t new_row = current_row_perm[old_row];
+
+            for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                if (new_col_idx == col) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (new_pos + A.rows - new_row) % A.rows;
+
+                    num_nnz_copy[old_diag_idx]--;
+                    num_nnz_copy[new_diag_idx]++;
+
+                    if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                    if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                } else if (new_col_idx > col && new_col_idx <= new_pos) {
+                    size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
+                    size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+                    
+                    num_nnz_copy[old_diag_idx]--;
+                    num_nnz_copy[new_diag_idx]++;
+
+                    if (num_nnz_copy[old_diag_idx] == 0) gain++;
+                    if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                }
+            }
+        }
+    }
+    return gain - loss;
+}
+
+int compute_gain_displace_row(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
+                               unsigned int* num_nnz, size_t row, size_t new_pos) {
+    int gain = 0;
+    int loss = 0;
+
+    std::vector<size_t> inv_row_perm(A.rows);
+    for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
+
+    int num_nnz_copy[A.rows];
+    std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
+    
+    for (size_t k = A.row_ptr[inv_row_perm[row]]; k < A.row_ptr[inv_row_perm[row] + 1]; k++) {
+        size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+        size_t new_diag_idx = (new_col_idx + A.rows - new_pos) % A.rows;
+        size_t old_diag_idx = (new_col_idx + A.rows - row) % A.rows;
+
+        num_nnz_copy[new_diag_idx]++;
+        num_nnz_copy[old_diag_idx]--;
+
+        if (num_nnz_copy[new_diag_idx] == 1) loss++;
+        if (num_nnz_copy[old_diag_idx] == 0) gain++;
+    }
+
+    if (row > new_pos) {
+        for (size_t current_row = new_pos; current_row < row; current_row++) {
+            size_t old_row_idx = inv_row_perm[current_row];
+
+            for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
+
+                num_nnz_copy[new_diag_idx]++;
+                num_nnz_copy[old_diag_idx]--;
+
+                if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                if (num_nnz_copy[old_diag_idx] == 0) gain++;
+            }
+        }
+    } else {
+        for (size_t current_row = new_pos; current_row > row; current_row--) {
+            size_t old_row_idx = inv_row_perm[current_row];
+
+            for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
+                size_t new_col_idx = current_col_perm[A.col_idx[k]];
+
+                size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
+                size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
+
+                num_nnz_copy[new_diag_idx]++;
+                num_nnz_copy[old_diag_idx]--;
+
+                if (num_nnz_copy[new_diag_idx] == 1) loss++;
+                if (num_nnz_copy[old_diag_idx] == 0) gain++;
+            }
+        }
+    }
+
+    return gain - loss;
+}
+
+void find_and_execute_displace_move(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm,
                                 unsigned int* num_nnz, int& best_move_gain, unsigned int& current_diagonal_count, 
                                 unsigned int& steps_without_gain, bool &row_turn) {
     std::random_device rd;
@@ -42,67 +387,7 @@ void find_and_execute_move_move(const CSRMatrix& A, std::vector<size_t>& current
 
             while (new_pos == row) new_pos = row_dist(gen);
 
-            // std::cout << "Simulating moving row " << row << " to position " << new_pos << std::endl;
-
-            int gain = 0;
-            int loss = 0;
-
-            std::vector<size_t> inv_row_perm(A.rows);
-            for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
-
-            int num_nnz_copy[A.rows];
-            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
-            
-            for (size_t k = A.row_ptr[inv_row_perm[row]]; k < A.row_ptr[inv_row_perm[row] + 1]; k++) {
-                size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                size_t new_diag_idx = (new_col_idx + A.rows - new_pos) % A.rows;
-                size_t old_diag_idx = (new_col_idx + A.rows - row) % A.rows;
-
-                num_nnz_copy[new_diag_idx]++;
-                num_nnz_copy[old_diag_idx]--;
-
-                if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                if (num_nnz_copy[old_diag_idx] == 0) gain++;
-            }
-
-            if (row > new_pos) {
-                for (size_t current_row = new_pos; current_row < row; current_row++) {
-                    size_t old_row_idx = inv_row_perm[current_row];
-
-                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
-                        size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
-
-                        num_nnz_copy[new_diag_idx]++;
-                        num_nnz_copy[old_diag_idx]--;
-
-                        if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                        if (num_nnz_copy[old_diag_idx] == 0) gain++;
-                    }
-                }
-            } else {
-                for (size_t current_row = new_pos; current_row > row; current_row--) {
-                    size_t old_row_idx = inv_row_perm[current_row];
-
-                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
-                        size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
-
-                        num_nnz_copy[new_diag_idx]++;
-                        num_nnz_copy[old_diag_idx]--;
-
-                        if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                        if (num_nnz_copy[old_diag_idx] == 0) gain++;
-                    }
-                }
-            }
-
-            int move_gain = gain - loss;
+            int move_gain = compute_gain_displace_row(A, current_row_perm, current_col_perm, num_nnz, row, new_pos);
 
             // only allow negative gain moves if we feel stuck
             if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
@@ -120,70 +405,7 @@ void find_and_execute_move_move(const CSRMatrix& A, std::vector<size_t>& current
 
             while (col == new_pos) new_pos = col_dist(gen);
 
-            int gain = 0;
-            int loss = 0;
-
-            int num_nnz_copy[A.rows];
-            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
-
-            if (col > new_pos) {
-                for (size_t old_row = 0; old_row < A.rows; old_row++) {
-                    size_t new_row = current_row_perm[old_row];
-
-                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        if (new_col_idx == col) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (new_pos + A.rows - new_row) % A.rows;
-
-                            num_nnz_copy[old_diag_idx]--;
-                            num_nnz_copy[new_diag_idx]++;
-
-                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
-                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                        } else if (new_col_idx < col && new_col_idx >= new_pos) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
-
-                            num_nnz_copy[old_diag_idx]--;
-                            num_nnz_copy[new_diag_idx]++;
-
-                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
-                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                        }
-                    }
-                }
-            } else {
-                for (size_t old_row = 0; old_row < A.rows; old_row++) {
-                    size_t new_row = current_row_perm[old_row];
-
-                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        if (new_col_idx == col) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (new_pos + A.rows - new_row) % A.rows;
-
-                            num_nnz_copy[old_diag_idx]--;
-                            num_nnz_copy[new_diag_idx]++;
-
-                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
-                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                        } else if (new_col_idx > col && new_col_idx <= new_pos) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
-                            
-                            num_nnz_copy[old_diag_idx]--;
-                            num_nnz_copy[new_diag_idx]++;
-
-                            if (num_nnz_copy[old_diag_idx] == 0) gain++;
-                            if (num_nnz_copy[new_diag_idx] == 1) loss++;
-                        }
-                    }
-                }
-            }
-            int move_gain = gain - loss;
+            int move_gain = compute_gain_displace_col(A, current_row_perm, current_col_perm, num_nnz, col, new_pos);
 
             // only allow negative gain moves if we feel stuck
             if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
@@ -208,99 +430,10 @@ void find_and_execute_move_move(const CSRMatrix& A, std::vector<size_t>& current
 
         current_diagonal_count -= best_move_gain;
 
-        std::vector<size_t> inv_row_perm(A.rows);
-        for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
-
         if (row_turn) {
-            for (size_t k = A.row_ptr[inv_row_perm[best_move_row]]; k < A.row_ptr[inv_row_perm[best_move_row] + 1]; k++) {
-                size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                size_t new_diag_idx = (new_col_idx + A.rows - best_move_new_pos) % A.rows;
-                size_t old_diag_idx = (new_col_idx + A.rows - best_move_row) % A.rows;
-
-                num_nnz[new_diag_idx]++;
-                num_nnz[old_diag_idx]--;
-            }
-
-            if (best_move_row > best_move_new_pos) {
-                for (size_t current_row = best_move_new_pos; current_row < best_move_row; current_row++) {
-                    size_t old_row_idx = inv_row_perm[current_row];
-
-                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
-                        size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
-
-                        num_nnz[new_diag_idx]++;
-                        num_nnz[old_diag_idx]--;
-                    }
-                }
-            } else {
-                for (size_t current_row = best_move_new_pos; current_row > best_move_row; current_row--) {
-                    size_t old_row_idx = inv_row_perm[current_row];
-
-                    for (size_t k = A.row_ptr[old_row_idx]; k < A.row_ptr[old_row_idx+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        size_t old_diag_idx = (new_col_idx + A.rows - current_row) % A.rows;
-                        size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
-
-                        num_nnz[new_diag_idx]++;
-                        num_nnz[old_diag_idx]--;
-                    }
-                }
-            }
-            
-            update_perm_by_move(current_row_perm, best_move_row, best_move_new_pos);
+            execute_move_row(A, current_row_perm, current_col_perm, best_move_row, best_move_new_pos, num_nnz);
         } else {
-            if (best_move_col > best_move_new_pos) {
-                for (size_t old_row = 0; old_row < A.rows; old_row++) {
-                    size_t new_row = current_row_perm[old_row];
-
-                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        if (new_col_idx == best_move_col) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (best_move_new_pos + A.rows - new_row) % A.rows;
-
-                            num_nnz[old_diag_idx]--;
-                            num_nnz[new_diag_idx]++;
-                        } else if (new_col_idx < best_move_col && new_col_idx >= best_move_new_pos) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (old_diag_idx + 1) % A.rows;
-
-                            num_nnz[old_diag_idx]--;
-                            num_nnz[new_diag_idx]++;
-                        }
-                    }
-                }
-            } else {
-                for (size_t old_row = 0; old_row < A.rows; old_row++) {
-                    size_t new_row = current_row_perm[old_row];
-
-                    for (size_t k = A.row_ptr[old_row]; k < A.row_ptr[old_row+1]; k++) {
-                        size_t new_col_idx = current_col_perm[A.col_idx[k]];
-
-                        if (new_col_idx == best_move_col) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (best_move_new_pos + A.rows - new_row) % A.rows;
-
-                            num_nnz[old_diag_idx]--;
-                            num_nnz[new_diag_idx]++;
-                        } else if (new_col_idx > best_move_col && new_col_idx <= best_move_new_pos) {
-                            size_t old_diag_idx = (new_col_idx + A.rows - new_row) % A.rows;
-                            size_t new_diag_idx = (old_diag_idx + A.rows - 1) % A.rows;
-                            
-                            num_nnz[old_diag_idx]--;
-                            num_nnz[new_diag_idx]++;
-                        }
-                    }
-                }
-            }
-            
-            update_perm_by_move(current_col_perm, best_move_col, best_move_new_pos);
+            execute_move_col(A, current_row_perm, current_col_perm, best_move_col, best_move_new_pos, num_nnz);
         }
     }
     
@@ -324,35 +457,7 @@ void find_and_execute_swap_move(const CSRMatrix& A, std::vector<size_t>& current
             size_t row1 = row_dist(gen);
             while (row1 == row0) row1 = row_dist(gen);
 
-            // LeaveGain_i := 1 if we make an HS diagonal fully vacant when row_i is removed from its place
-            // ArrivalLoss_i := 1 if we put a nonzero in a previously vacant HS diagonal by inserting row_i into j's place
-            int leave_gains = 0;
-            int arrival_losses = 0;
-
-            size_t idx_0, idx_1;
-            for (size_t i = 0; i < A.rows; i++) {
-                if (current_row_perm[i] == row0) idx_0 = i;
-                if (current_row_perm[i] == row1) idx_1 = i;
-            }
-
-            int num_nnz_copy[A.rows];
-            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
-
-            for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
-                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 1) leave_gains++;
-                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]--;
-                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 0) arrival_losses++;
-                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]++;
-            }
-
-            for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1+1]; k++) {
-                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows] == 1) leave_gains++;
-                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row1) % A.rows]--;
-                if (num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows] == 0) arrival_losses++;
-                num_nnz_copy[(current_col_perm[A.col_idx[k]] + A.rows - row0) % A.rows]++;
-            }
-
-            int move_gain = leave_gains - arrival_losses;
+            int move_gain = compute_gain_row_swap(A, current_row_perm, current_col_perm, num_nnz, row0, row1);
 
             // only allow negative gain moves if we feel stuck
             if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
@@ -370,39 +475,7 @@ void find_and_execute_swap_move(const CSRMatrix& A, std::vector<size_t>& current
 
             while (col1 == col0) col1 = col_dist(gen);
 
-            int leave_gains = 0;
-            int arrival_losses = 0;
-
-            size_t idx_0, idx_1;
-            for (size_t i = 0; i < A.cols; i++) {
-                if (current_col_perm[i] == col0) idx_0 = i;
-                if (current_col_perm[i] == col1) idx_1 = i;
-            }
-            
-            int num_nnz_copy[A.rows];
-            std::copy(num_nnz, num_nnz + A.rows, num_nnz_copy);
-
-            for (size_t row = 0; row < A.rows; row++) {
-                size_t new_row0 = current_row_perm[row];
-                size_t new_row1 = current_row_perm[row];
-
-                for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
-                    size_t idx = A.col_idx[k];
-                    if (idx == idx_0) {
-                        if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 1) leave_gains++;
-                        num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]--;
-                        if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 0) arrival_losses++;
-                        num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]++;
-                    } else if (idx == idx_1) {
-                        if (num_nnz_copy[(col1 + A.rows - new_row1) % A.rows] == 1) leave_gains++;
-                        num_nnz_copy[(col1 + A.rows - new_row1) % A.rows]--;
-                        if (num_nnz_copy[(col0 + A.rows - new_row0) % A.rows] == 0) arrival_losses++;
-                        num_nnz_copy[(col0 + A.rows - new_row0) % A.rows]++;
-                    }
-                }
-            }
-
-            int move_gain = leave_gains - arrival_losses;
+            int move_gain = compute_gain_col_swap(A, current_row_perm, current_col_perm, num_nnz, col0, col1);
 
             // only allow negative gain moves if we feel stuck
             if (r_iter < max_r_iter / 2 && move_gain < 0) continue;
@@ -427,49 +500,14 @@ void find_and_execute_swap_move(const CSRMatrix& A, std::vector<size_t>& current
         current_diagonal_count -= best_move_gain;
 
         if (row_turn) {
-            size_t idx_0, idx_1;
-            for (size_t i = 0; i < A.rows; i++) {
-                if (current_row_perm[i] == best_move_row0) idx_0 = i;
-                if (current_row_perm[i] == best_move_row1) idx_1 = i;
-            }
-            std::swap(current_row_perm[idx_0], current_row_perm[idx_1]);
-
-            for (size_t k = A.row_ptr[idx_0]; k < A.row_ptr[idx_0 + 1]; k++) {
-                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]--;
-                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]++;
-            }
-            for (size_t k = A.row_ptr[idx_1]; k < A.row_ptr[idx_1 + 1]; k++) {
-                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row1) % A.rows]--;
-                num_nnz[(current_col_perm[A.col_idx[k]] + A.rows - best_move_row0) % A.rows]++;
-            }
+            execute_row_swap(A, current_row_perm, current_col_perm, best_move_row0, best_move_row1, num_nnz);
         } else {
-            size_t idx_0, idx_1;
-            for (size_t i = 0; i < A.cols; i++) {
-                if (current_col_perm[i] == best_move_col0) idx_0 = i;
-                if (current_col_perm[i] == best_move_col1) idx_1 = i;
-            }
-            std::swap(current_col_perm[idx_0], current_col_perm[idx_1]);
-
-            for (size_t row = 0; row < A.rows; row++) {
-                size_t new_row0 = current_row_perm[row];
-                size_t new_row1 = current_row_perm[row];
-
-                for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
-                    size_t idx = A.col_idx[k];
-                    if (idx == idx_0) {
-                        num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]--;
-                        num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]++;
-                    } else if (idx == idx_1) {
-                        num_nnz[(best_move_col1 + A.rows - new_row1) % A.rows]--;
-                        num_nnz[(best_move_col0 + A.rows - new_row0) % A.rows]++;
-                    }
-                }
-            }
+            execute_col_swap(A, current_row_perm, current_col_perm, best_move_col0, best_move_col1, num_nnz);
         }
     }
 }
 
-void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm) {
+void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm) {
     // number of nonzeros in each HS diagonal
     unsigned int num_nnz[A.rows] = {0};
     unsigned int best_num_nnz[A.rows] = {0};
@@ -507,7 +545,7 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
         int best_move_gain = INT_MIN;
         
         if (move_type == 0) find_and_execute_swap_move(A, current_row_perm, current_col_perm, num_nnz, best_move_gain, current_diagonal_count, steps_without_gain, row_turn);
-        else find_and_execute_move_move(A, current_row_perm, current_col_perm, num_nnz, best_move_gain, current_diagonal_count, steps_without_gain, row_turn);
+        else find_and_execute_displace_move(A, current_row_perm, current_col_perm, num_nnz, best_move_gain, current_diagonal_count, steps_without_gain, row_turn);
         
         if (best_move_gain == INT_MIN) {
             std::cout << "No beneficial moves found after " << move_type << ". Stopping..." << std::endl;
@@ -553,37 +591,4 @@ void hsorder_kemal(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vecto
     
     std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
     std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
-}
-
-CSRMatrix permute_kemal(const CSRMatrix& A, const std::vector<size_t>& row_perm, const std::vector<size_t>& col_perm) {
-    std::vector<size_t> inv_row_perm(A.rows);
-    for (size_t i = 0; i < A.rows; i++) {
-        inv_row_perm[row_perm[i]] = i;
-    }
-    CSRMatrix A_perm;
-    A_perm.rows = A.rows;
-    A_perm.cols = A.cols;
-    A_perm.row_ptr.resize(A.rows + 1);
-    A_perm.col_idx.resize(A.col_idx.size());
-    A_perm.values.resize(A.col_idx.size());
-
-    size_t num_nnz = 0;
-    for (size_t row = 0; row < A.rows; row++) {
-        A_perm.row_ptr[row] = num_nnz;
-        for (size_t k = A.row_ptr[inv_row_perm[row]]; k < A.row_ptr[inv_row_perm[row] + 1]; k++) {
-            A_perm.col_idx[num_nnz] = A.col_idx[k];
-            A_perm.values[num_nnz] = A.values[k];
-            num_nnz++;
-        }
-    }
-    A_perm.row_ptr[A.rows] = num_nnz;
-
-    std::vector<size_t> new_col_idx(A_perm.col_idx.size());
-    for (size_t j = 0; j < A_perm.col_idx.size(); j++) {
-        new_col_idx[j] = col_perm[A_perm.col_idx[j]]; // old->new mapping
-    }
-    A_perm.col_idx.swap(new_col_idx);
-
-
-    return A_perm;
 }

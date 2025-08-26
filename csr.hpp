@@ -357,73 +357,37 @@ void printRowNnzStats(const CSRMatrix &A) {
     std::cout << "Stdev nonzeros per row:  " << stdev    << "\n";
 }
 
-/**
- * @brief Permutes a matrix A given forward permutations, producing B = P_r A P_c^T.
- * @param row_P_fwd The forward row permutation vector (old->new).
- * @param col_P_fwd The forward column permutation vector (old->new).
- * @return The permuted matrix B.
- */
-CSRMatrix permute(const CSRMatrix &A, const std::vector<size_t> &row_perm, const std::vector<size_t> &col_perm) {
-    size_t m = A.rows;
-    size_t n = A.cols;
-    CSRMatrix B;
-    B.rows = m; 
-    B.cols = n;
-
-    // Temporary storage for each row
-    std::vector<std::vector<size_t>> new_cols(m);
-    std::vector<std::vector<double>> new_vals(m);
-    B.row_ptr.assign(m + 1, 0);
-
-    // Inverse column permutation
-    std::vector<size_t> inv_col_perm(n);
-    for (size_t j = 0; j < n; j++) {
-        inv_col_perm[col_perm[j]] = j;
+CSRMatrix permute(const CSRMatrix& A, const std::vector<size_t>& row_perm, const std::vector<size_t>& col_perm) {
+    std::vector<size_t> inv_row_perm(A.rows);
+    for (size_t i = 0; i < A.rows; i++) {
+        inv_row_perm[row_perm[i]] = i;
     }
+    CSRMatrix A_perm;
+    A_perm.rows = A.rows;
+    A_perm.cols = A.cols;
+    A_perm.row_ptr.resize(A.rows + 1);
+    A_perm.col_idx.resize(A.col_idx.size());
+    A_perm.values.resize(A.col_idx.size());
 
-    // Place non-zero elements into their new positions
-    for (size_t i_old = 0; i_old < m; ++i_old) {
-        size_t i_new = row_perm[i_old];
-        for (size_t k = A.row_ptr[i_new]; k < A.row_ptr[i_new + 1]; ++k) {
-            size_t j_old = A.col_idx[k];
-            size_t j_new = inv_col_perm[j_old];
-            new_cols[i_old].push_back(j_new);
-            new_vals[i_old].push_back(A.values[k]);  // preserve original value
+    size_t num_nnz = 0;
+    for (size_t row = 0; row < A.rows; row++) {
+        A_perm.row_ptr[row] = num_nnz;
+        for (size_t k = A.row_ptr[inv_row_perm[row]]; k < A.row_ptr[inv_row_perm[row] + 1]; k++) {
+            A_perm.col_idx[num_nnz] = A.col_idx[k];
+            A_perm.values[num_nnz] = A.values[k];
+            num_nnz++;
         }
     }
+    A_perm.row_ptr[A.rows] = num_nnz;
 
-    // Compute row_ptr
-    size_t nnz = 0;
-    for (size_t i = 0; i < m; ++i) {
-        // Sort columns and values together
-        std::vector<size_t>& cols = new_cols[i];
-        std::vector<double>& vals = new_vals[i];
-        std::vector<size_t> idx(cols.size());
-        for (size_t k = 0; k < idx.size(); ++k) idx[k] = k;
-        std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return cols[a] < cols[b]; });
-
-        std::vector<size_t> sorted_cols(cols.size());
-        std::vector<double> sorted_vals(vals.size());
-        for (size_t k = 0; k < idx.size(); ++k) {
-            sorted_cols[k] = cols[idx[k]];
-            sorted_vals[k] = vals[idx[k]];
-        }
-        cols.swap(sorted_cols);
-        vals.swap(sorted_vals);
-
-        B.row_ptr[i + 1] = B.row_ptr[i] + cols.size();
-        nnz += cols.size();
+    std::vector<size_t> new_col_idx(A_perm.col_idx.size());
+    for (size_t j = 0; j < A_perm.col_idx.size(); j++) {
+        new_col_idx[j] = col_perm[A_perm.col_idx[j]]; // old->new mapping
     }
+    A_perm.col_idx.swap(new_col_idx);
 
-    // Flatten columns and values
-    B.col_idx.reserve(nnz);
-    B.values.reserve(nnz);
-    for (size_t i = 0; i < m; ++i) {
-        B.col_idx.insert(B.col_idx.end(), new_cols[i].begin(), new_cols[i].end());
-        B.values.insert(B.values.end(), new_vals[i].begin(), new_vals[i].end());
-    }
 
-    return B;
+    return A_perm;
 }
 
 

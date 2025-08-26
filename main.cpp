@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
 
     } if(order_id_int == 1) {   
         rcm::find_rcm_ordering(A, best_row_perm, best_col_perm);
-        A_perm = permute_kemal(A, best_row_perm, best_col_perm);
+        A_perm = permute(A, best_row_perm, best_col_perm);
     } else if (order_id_int == 2) {
         int window_size = atoi(argv[argc - 1]);
 
@@ -115,7 +115,7 @@ int main(int argc, char* argv[]) {
             // }
         } else { 
             apply_GOrder(A, window_size, best_row_perm, best_col_perm);
-            A_perm = permute_kemal(A, best_row_perm, best_col_perm);
+            A_perm = permute(A, best_row_perm, best_col_perm);
         }
     }  else if (order_id_int == 3) {
         std::vector<size_t> rcm_row_perm(A.rows), rcm_col_perm(A.cols), hs_row_perm(A.rows), hs_col_perm(A.cols);
@@ -128,15 +128,15 @@ int main(int argc, char* argv[]) {
             hs_col_perm[i] = i;
         }
         rcm::find_rcm_ordering(A, rcm_row_perm, rcm_col_perm);
-        A_perm = permute_kemal(A, rcm_row_perm, rcm_col_perm);
+        A_perm = permute(A, rcm_row_perm, rcm_col_perm);
         visualize_csr(A_perm);
         std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
 
-        hsorder_kemal(A_perm, hs_row_perm, hs_col_perm);
+        hsorder(A_perm, hs_row_perm, hs_col_perm);
         for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[rcm_row_perm[i]];
         for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[rcm_col_perm[i]];            
         
-        A_perm = permute_kemal(A_perm, hs_row_perm, hs_col_perm);
+        A_perm = permute(A_perm, hs_row_perm, hs_col_perm);
     }
 
     std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
