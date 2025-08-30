@@ -2,12 +2,21 @@
 #include <queue>
 #include <unordered_map>
 #include <utility>
+#include <atomic>
 
 using namespace std;
 
 #include "csr.hpp"
 #include "utils.hpp"
 #include <climits>
+
+#ifdef _WIN32
+#include <conio.h>  // for _kbhit() and _getch()
+#else
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 
 void update_perm_by_move(std::vector<size_t>& perm, size_t row_to_move, size_t new_pos) {
     if (row_to_move < new_pos) {
@@ -525,7 +534,7 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
     for (size_t i = 0; i < A.rows; i++) current_row_perm[i] = i;
     for (size_t i = 0; i < A.cols; i++) current_col_perm[i] = i;
 
-    const unsigned int max_steps_without_improvement = 1000;
+    const unsigned int max_steps_without_improvement = 10000;
     const unsigned int max_steps_without_gain = max_steps_without_improvement / 5;
     
     // TODO: use this for some sort of backtracking
@@ -588,6 +597,251 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
         row_turn = !row_turn;
     }
     std::cout << "HSOrder complete. Active diagonals: " << best_diagonal_count << "/" << A.rows << std::endl;
+    
+    std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
+    std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
+}
+
+std::atomic<bool> stop_requested(false);
+
+#ifdef __linux__
+// Function to check if a key has been pressed (non-blocking)
+bool kbhit() {
+    struct termios oldt, newt;
+    int ch;
+    int oldf;
+
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    ch = getchar();
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    if(ch != EOF){
+        ungetc(ch, stdin);
+        return true;
+    }
+    return false;
+}
+#endif
+
+void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm, size_t window_size, bool debug_mode) {
+    std::random_device rd;   // seed
+    std::mt19937 g(rd()); 
+
+    window_size = std::min(A.rows, window_size);
+
+    const unsigned int initial_diag_count = count_nonempty_hs_diagonals(A);
+    unsigned int current_diag_count = initial_diag_count;
+    unsigned int best_diag_count = current_diag_count;
+
+    std::vector<size_t> current_row_perm(A.rows), current_col_perm(A.cols);
+    unsigned int num_nnz[A.rows] = {0};
+    unsigned int best_num_nnz[A.rows] = {0};
+    for (size_t row = 0; row < A.rows; row++) {
+        for (size_t k = A.row_ptr[row]; k < A.row_ptr[row + 1]; k++) {
+            num_nnz[(A.col_idx[k] + A.rows - row) % A.rows]++;
+            best_num_nnz[(A.col_idx[k] + A.rows - row) % A.rows]++;
+        }
+    }
+    for (size_t i = 0; i < A.rows; i++) {
+        current_col_perm[i] = i;
+        current_row_perm[i] = i;
+    }
+
+    bool allow_negative = false;
+    
+    size_t passes_without_improvement = 0;
+    const size_t max_passes_without_improvement = 10000 * ((A.rows + 255 )/ 256);
+
+    std::vector<size_t> best_row_perm(A.rows), best_col_perm(A.cols);
+
+    for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = i;
+    for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = i;
+
+    size_t negative_passes = 0;
+    const size_t backtracking_threshold = 50;
+
+    std::vector<bool> is_row_placed(A.rows, false), is_col_placed(A.cols, false);
+
+    while (passes_without_improvement < max_passes_without_improvement) {
+        for (size_t i = 0; i < A.rows; i++) is_row_placed[i] = false;
+        for (size_t i = 0; i < A.cols; i++) is_col_placed[i] = false;
+
+        std::vector<size_t> random_row_visit_order(A.rows), random_col_visit_order(A.cols);
+        int pass_gain = 0;
+    
+        std::shuffle(random_row_visit_order.begin(), random_row_visit_order.end(), g);
+        std::shuffle(random_col_visit_order.begin(), random_col_visit_order.end(), g);
+
+        for (size_t i = 0; i < A.rows; i++) {
+            size_t row0 = random_row_visit_order[i];
+            size_t col0 = random_col_visit_order[i];
+
+            if (!is_row_placed[row0]) {
+                int best_move_gain = INT_MIN;
+                size_t best_move_row1;
+                bool is_best_swap = true;
+                
+                std::vector<size_t> trial_window(A.rows);
+                for (size_t j = 0; j < A.rows; j++) trial_window[j] = j;
+                std::shuffle(trial_window.begin(), trial_window.end(), g);
+                trial_window.resize(window_size);
+                
+                for (size_t w_i = 0; w_i < window_size; w_i++) {
+                    if (trial_window[w_i] == row0) continue;
+                    int swap_move_gain = INT_MIN, displace_move_gain = INT_MIN;
+                    if (!is_row_placed[trial_window[w_i]]) swap_move_gain = compute_gain_row_swap(A, current_row_perm, current_col_perm, num_nnz, row0, trial_window[w_i]);
+                    
+                    bool allow_displace = true;
+                    size_t high = max(row0, trial_window[w_i]), low = min(row0, trial_window[w_i]);
+                    for (size_t r = low; r <= high; r++) if (is_row_placed[r]) {
+                        allow_displace = false;
+                        break;
+                    }
+                    if (allow_displace) displace_move_gain = compute_gain_displace_row(A, current_row_perm, current_col_perm, num_nnz, row0, trial_window[w_i]);
+
+                    if (swap_move_gain > best_move_gain) {
+                        best_move_gain = swap_move_gain;
+                        best_move_row1 = trial_window[w_i];
+                        is_best_swap = true;
+                    } 
+                    if (displace_move_gain > best_move_gain) {
+                        best_move_gain = displace_move_gain;
+                        best_move_row1 = trial_window[w_i];
+                        is_best_swap = false;
+                    }
+                }
+
+                if (best_move_gain == INT_MIN) continue;
+                else if (best_move_gain < 0 && !allow_negative) continue;
+                else {
+                    current_diag_count -= best_move_gain;
+                    pass_gain += best_move_gain;
+                    if (is_best_swap) {
+                        execute_row_swap(A, current_row_perm, current_col_perm, row0, best_move_row1, num_nnz);
+                        is_row_placed[row0] = true;
+                        is_row_placed[best_move_row1] = true;
+                    } else {
+                        execute_move_row(A, current_row_perm, current_col_perm, row0, best_move_row1, num_nnz);
+                        size_t high = max(row0, best_move_row1), low = min(row0, best_move_row1);
+                        for (size_t r = low; r < high; r++) is_row_placed[r] = true;
+                    }
+
+                    if (current_diag_count < best_diag_count) {
+                        best_diag_count = current_diag_count;
+                        std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
+                        std::copy(current_col_perm.begin(), current_col_perm.end(), best_col_perm.begin());
+                        std::copy(num_nnz, num_nnz + A.rows, best_num_nnz);
+                        passes_without_improvement = 0;
+                    }
+                }
+            }
+
+            if (!is_col_placed[col0]) {
+                int best_move_gain = INT_MIN;
+                size_t best_move_col1;
+                bool is_best_swap = true;
+
+                std::vector<size_t> trial_window(A.cols);
+                for (size_t j = 0; j < A.cols; j++) trial_window[j] = j;
+                std::shuffle(trial_window.begin(), trial_window.end(), g);
+                trial_window.resize(window_size);
+                
+                for (size_t w_i = 0; w_i < window_size; w_i++) {
+                    if (trial_window[w_i] == col0) continue;
+                    int swap_move_gain = INT_MIN, displace_move_gain = INT_MIN;
+                    if (!is_col_placed[trial_window[w_i]]) swap_move_gain = compute_gain_col_swap(A, current_row_perm, current_col_perm, num_nnz, col0, trial_window[w_i]);
+                    
+                    bool allow_displace = true;
+                    size_t high = max(col0, trial_window[w_i]), low = min(col0, trial_window[w_i]);
+                    for (size_t c = low; c < high; c++) if (is_col_placed[c]) {
+                        allow_displace = false;
+                        break;
+                    }
+                    if (allow_displace) displace_move_gain = compute_gain_displace_col(A, current_row_perm, current_col_perm, num_nnz, col0, trial_window[w_i]);
+
+                    if (swap_move_gain > best_move_gain) {
+                        best_move_gain = swap_move_gain;
+                        best_move_col1 = trial_window[w_i];
+                        is_best_swap = true;
+                    } 
+                    if (displace_move_gain > best_move_gain) {
+                        best_move_gain = displace_move_gain;
+                        best_move_col1 = trial_window[w_i];
+                        is_best_swap = false;
+                    }
+                }
+
+                if (best_move_gain == INT_MIN) continue;
+                else if (best_move_gain < 0 && !allow_negative) continue;
+                else {
+                    current_diag_count -= best_move_gain;
+                    pass_gain += best_move_gain;
+                    if (is_best_swap) {
+                        execute_col_swap(A, current_row_perm, current_col_perm, col0, best_move_col1, num_nnz);
+                        is_col_placed[col0] = true;
+                        is_col_placed[best_move_col1] = true;
+                    } else {
+                        execute_move_col(A, current_row_perm, current_col_perm, col0, best_move_col1, num_nnz);
+                        size_t low = min(col0, best_move_col1), high = max(col0, best_move_col1);
+                        for (size_t c = low; c < high; c++) is_col_placed[c] = true;
+                    }
+
+                    if (current_diag_count < best_diag_count) {
+                        best_diag_count = current_diag_count;
+                        std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
+                        std::copy(current_col_perm.begin(), current_col_perm.end(), best_col_perm.begin());
+                        std::copy(num_nnz, num_nnz + A.rows, best_num_nnz);
+                        passes_without_improvement = 0;
+                    }
+                }
+            }
+        }
+
+        if (passes_without_improvement >= 5) allow_negative = true;
+
+        if (pass_gain < 0) {
+            negative_passes++;
+            passes_without_improvement++;
+        } else if (pass_gain == 0) passes_without_improvement++;
+        else {
+            allow_negative = false;
+            negative_passes = 0;
+        }
+
+        if (negative_passes >= backtracking_threshold) {
+            std::cout << "Backtracking...\n";
+            std::copy(best_row_perm.begin(), best_row_perm.end(), current_row_perm.begin());
+            std::copy(best_col_perm.begin(), best_col_perm.end(), current_col_perm.begin());
+            std::copy(best_num_nnz, best_num_nnz + A.rows, num_nnz);
+            negative_passes = 0;
+        }
+
+        if (debug_mode && passes_without_improvement % 1000 == 0) {
+            std::cout << "Finished a pass with gain: " << pass_gain << " current diag count: " << current_diag_count << " best diag count: " << best_diag_count;
+            std::cout << " passes without impr: " << passes_without_improvement << " allow negative: " << allow_negative << " negative passes: " << negative_passes << std::endl;
+        }
+
+        #ifdef _WIN32
+            if (_kbhit()) {
+                stop_requested.store(true);
+                break;
+            }
+        #else
+            if (kbhit()) {
+                stop_requested.store(true);
+                break;
+            }
+        #endif
+        
+    }
     
     std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
     std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());

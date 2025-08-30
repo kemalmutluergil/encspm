@@ -8,20 +8,7 @@
 #include <map>
 #include <unordered_set>
 #include <assert.h>
-
-#define NUM_TRIALS 5
-
-void apply_GOrder(const CSRMatrix& A, int window_size, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm) {
-    CSRMatrix B = build_sym(A);
-    CSRMatrix Bt = build_transpose(B);
-
-    auto perm = gorder(B, Bt, window_size);
-
-    for (auto p : perm) {
-        row_perm.push_back(p);
-        col_perm.push_back(p);
-    }
-}
+#include <chrono>
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -59,6 +46,12 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: " << argv[0] << " [-c] [-d] <input.mtx> <order_id>" << std::endl;
         std::cerr << "   -c    Check computations using CKKS" << std::endl;
         std::cerr << "   -d    Enable debug mode" << std::endl;
+        std::cerr << "order_id: " << std::endl;
+        std::cerr << "   0: Identity" << std::endl;
+        std::cerr << "   1: RCM -> HSOrder" << std::endl;
+        std::cerr << "   2: GOrder -> HSOrder" << std::endl;
+        std::cerr << "   3: HSOrder" << std::endl;
+        std::cerr << "   4: Greedy HSOrder" << std::endl;
         return 1;
     }
 
@@ -94,49 +87,75 @@ int main(int argc, char* argv[]) {
         A_perm = A;
 
     } if(order_id_int == 1) {   
-        rcm::find_rcm_ordering(A, best_row_perm, best_col_perm);
+        auto order_start = std::chrono::high_resolution_clock::now();
+        rcm::find_rcm_ordering(A, best_row_perm, best_col_perm);     
+        auto order_end = std::chrono::high_resolution_clock::now();
+        auto order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(order_end - order_start).count();
+
+        std::cout << "RCM Ordering took " << order_dur << " ms" << std::endl;
         A_perm = permute(A, best_row_perm, best_col_perm);
     } else if (order_id_int == 2) {
         int window_size = atoi(argv[argc - 1]);
+        auto order_start = std::chrono::high_resolution_clock::now();
+        gorder(A, best_row_perm, best_col_perm, window_size);
+        auto order_end = std::chrono::high_resolution_clock::now();
+        auto order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(order_end - order_start).count();
 
-        if(m != n) {
-            std::cerr << "Program does not support nonsquare matrices yet...\n";
-            return 1;
-            // CSRMatrix B = build_bipartite_sym(A);
-            // CSRMatrix Bt = build_transpose(B);
-            // auto perm = gorder(B, Bt, window_size);
-        
-            // for (auto p : perm) {
-            //     if (p < m) {
-            //         row_perm.push_back(p);
-            //     } else {
-            //         col_perm.push_back(p - m);
-            //     }
-            // }
-        } else { 
-            apply_GOrder(A, window_size, best_row_perm, best_col_perm);
-            A_perm = permute(A, best_row_perm, best_col_perm);
-        }
+        std::cout << "GOrder took " << order_dur << " ms" << std::endl;
+        A_perm = permute(A, best_row_perm, best_col_perm);
     }  else if (order_id_int == 3) {
-        std::vector<size_t> rcm_row_perm(A.rows), rcm_col_perm(A.cols), hs_row_perm(A.rows), hs_col_perm(A.cols);
-        for (size_t i = 0; i < A.rows; i++) {
-            rcm_row_perm[i] = i;
-            hs_row_perm[i] = i;
-        }
-        for (size_t i = 0; i < A.cols; i++) {
-            rcm_col_perm[i] = i;
-            hs_col_perm[i] = i;
-        }
-        rcm::find_rcm_ordering(A, rcm_row_perm, rcm_col_perm);
-        A_perm = permute(A, rcm_row_perm, rcm_col_perm);
-        visualize_csr(A_perm);
-        std::cout << "Diagonal count: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
+        auto order_start = std::chrono::high_resolution_clock::now();
+        hsorder_long(A, best_row_perm, best_col_perm, 500, debug_mode);
+        auto order_end = std::chrono::high_resolution_clock::now();
+        auto order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(order_end - order_start).count();
 
-        hsorder(A_perm, hs_row_perm, hs_col_perm);
-        for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[rcm_row_perm[i]];
-        for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[rcm_col_perm[i]];            
-        
+        std::cout << "HS Ordering took " << order_dur << " ms" << std::endl;
+        A_perm = permute(A, best_row_perm, best_col_perm);
+    } else if (order_id_int == 4) {
+        std::vector<size_t> hs_row_perm(A.rows), rcm_row_perm(A.rows), hs_col_perm(A.cols), rcm_col_perm(A.cols);
+
+        auto rcm_order_start = std::chrono::high_resolution_clock::now();
+        rcm::find_rcm_ordering(A, rcm_row_perm, rcm_col_perm);
+        auto rcm_order_end = std::chrono::high_resolution_clock::now();
+        auto rcm_order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(rcm_order_end - rcm_order_start).count();
+
+        std::cout << "RCM Ordering took " << rcm_order_dur << " ms" << std::endl;
+        A_perm = permute(A, rcm_row_perm, rcm_col_perm);
+        std::cout << "Intermediate diagonal count after RCM: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
+
+        auto hs_order_start = std::chrono::high_resolution_clock::now();
+        hsorder_long(A_perm, hs_row_perm, hs_col_perm, 500, debug_mode);
+        auto hs_order_end = std::chrono::high_resolution_clock::now();
+        auto hs_order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(hs_order_end - hs_order_start).count();
+
+        std::cout << "HS Ordering took " << hs_order_dur << " ms" << std::endl;
         A_perm = permute(A_perm, hs_row_perm, hs_col_perm);
+
+        for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[rcm_row_perm[i]];
+        for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[rcm_col_perm[i]];
+    } else if (order_id_int == 5) {
+        int window_size = atoi(argv[argc - 1]);
+        std::vector<size_t> hs_row_perm(A.rows), go_row_perm(A.rows), hs_col_perm(A.cols), go_col_perm(A.cols);
+
+        auto go_order_start = std::chrono::high_resolution_clock::now();
+        gorder(A, go_row_perm, go_col_perm, window_size);
+        auto go_order_end = std::chrono::high_resolution_clock::now();
+        auto go_order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(go_order_end - go_order_start).count();
+
+        std::cout << "GOrder took " << go_order_dur << " ms" << std::endl;
+        A_perm = permute(A, go_row_perm, go_col_perm);
+        std::cout << "Intermediate diagonal count after GOrder: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
+
+        auto hs_order_start = std::chrono::high_resolution_clock::now();
+        hsorder_long(A_perm, hs_row_perm, hs_col_perm, 500, debug_mode);
+        auto hs_order_end = std::chrono::high_resolution_clock::now();
+        auto hs_order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(hs_order_end - hs_order_start).count();
+
+        std::cout << "HS Ordering took " << hs_order_dur << " ms" << std::endl;
+        A_perm = permute(A_perm, hs_row_perm, hs_col_perm);
+
+        for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[go_row_perm[i]];
+        for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[go_col_perm[i]];
     }
 
     std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
