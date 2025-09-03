@@ -658,7 +658,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
     bool allow_negative = false;
     
     size_t passes_without_improvement = 0;
-    const size_t max_passes_without_improvement = 10000 * ((A.rows + 255 )/ 256);
+    const size_t max_passes_without_improvement = 100 * ((A.rows + 255 )/ 256);
 
     std::vector<size_t> best_row_perm(A.rows), best_col_perm(A.cols);
 
@@ -807,10 +807,10 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
 
         if (passes_without_improvement >= 5) allow_negative = true;
 
-        if (pass_gain < 0) {
+        if (pass_gain <= 0) {
             negative_passes++;
             passes_without_improvement++;
-        } else if (pass_gain == 0) passes_without_improvement++;
+        }
         else {
             allow_negative = false;
             negative_passes = 0;
@@ -824,7 +824,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
             negative_passes = 0;
         }
 
-        if (debug_mode && passes_without_improvement % 1000 == 0) {
+        if (debug_mode && passes_without_improvement % 50 == 0) {
             std::cout << "Finished a pass with gain: " << pass_gain << " current diag count: " << current_diag_count << " best diag count: " << best_diag_count;
             std::cout << " passes without impr: " << passes_without_improvement << " allow negative: " << allow_negative << " negative passes: " << negative_passes << std::endl;
         }
