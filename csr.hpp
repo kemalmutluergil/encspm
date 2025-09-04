@@ -35,7 +35,7 @@ void print_csr_info(const CSRMatrix& A) {
     }
 }
 
-void visualize_csr(const CSRMatrix& A, size_t max_height = 40, size_t max_width = 100) {
+void visualize_csr(const CSRMatrix& A, size_t max_height = 100, size_t max_width = 100) {
     if (A.rows == 0 || A.cols == 0) {
         cout << "[Empty matrix]" << endl;
         return;

@@ -846,3 +846,87 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
     std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
     std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
 }
+
+void independent_set_order(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm, bool debug_mode) {
+    // order rows based on crowdedness
+    vector<size_t> row_indices(A.rows);
+    for (size_t i = 0; i < A.rows; ++i) row_indices[i] = i;
+
+    // Sort by nnz descending
+    sort(row_indices.begin(), row_indices.end(),
+        [&A](size_t a, size_t b) {
+            size_t nnz_a = A.row_ptr[a+1] - A.row_ptr[a];
+            size_t nnz_b = A.row_ptr[b+1] - A.row_ptr[b];
+            return nnz_a > nnz_b;  // descending
+        });
+    
+    std::vector<size_t> current_row_perm(A.rows), current_col_perm(A.cols);
+    for (size_t i = 0; i < A.rows; i++) current_row_perm[row_indices[i]] = i;
+    for (size_t i = 0; i < A.rows; i++) current_col_perm[i] = i;
+
+    size_t current_row = 0; 
+    size_t old_row_index = row_indices[current_row];
+
+    size_t num_nnz = A.row_ptr[old_row_index+1] - A.row_ptr[old_row_index];
+    size_t stride = (A.cols + num_nnz) / num_nnz;
+    
+    std::set<size_t> occupied_diagonal_indices, fixed_cols;
+
+    for (int i = 0; i < num_nnz; i++) {
+        size_t new_pos = i * stride;
+        size_t old_pos = A.col_idx[A.row_ptr[old_row_index] + i];
+
+        std::swap(current_col_perm[new_pos], current_col_perm[old_pos]);
+        occupied_diagonal_indices.insert(i * stride);
+        fixed_cols.insert(new_pos);
+    }
+
+    size_t iter_without_move = 0;
+    bool made_a_move = true;
+    for (current_row = 1; current_row < A.rows && made_a_move; current_row++) {
+        old_row_index = row_indices[current_row];
+
+        for (size_t k = A.row_ptr[old_row_index]; k < A.row_ptr[old_row_index+1]; k++) {
+            size_t col_idx = current_col_perm[A.col_idx[k]];
+            made_a_move = false;
+
+            if (fixed_cols.find(col_idx) != fixed_cols.end()) {
+                occupied_diagonal_indices.insert((col_idx + A.rows - current_row) % A.rows);
+            } else {
+                bool moved_nnz = false;
+                for (size_t diag_to_place: occupied_diagonal_indices) {
+                    size_t new_pos = (current_row + diag_to_place) % A.rows;
+                    if (fixed_cols.find(new_pos) != fixed_cols.end()) continue;
+                    if (new_pos == col_idx) {
+                        fixed_cols.insert(col_idx);
+                        made_a_move = true;
+                        moved_nnz = true;
+                        break;
+                    } else {
+                        size_t idx0, idx1;
+                        for (size_t i = 0; i < A.cols; i++) {
+                            if (current_col_perm[i] == col_idx) idx0 = i;
+                            else if (current_col_perm[i] == new_pos) idx1 = i;
+                        }
+                        std::swap(current_col_perm[idx0], current_col_perm[idx1]);
+                        fixed_cols.insert(new_pos);
+                        made_a_move = true;
+                        moved_nnz = true;
+                        break;
+                    }
+                }
+                if (!moved_nnz) {
+                    occupied_diagonal_indices.insert((col_idx + A.rows - current_row) % A.rows);
+                }
+            }
+        }
+        if (!made_a_move) iter_without_move++;
+        else iter_without_move = 0;
+    }
+
+    std::cout << "Stopped at row " << current_row << " with " << occupied_diagonal_indices.size() << " diagonals" << std::endl;
+
+       
+    std::copy(current_row_perm.begin(), current_row_perm.end(), row_perm.begin());
+    std::copy(current_col_perm.begin(), current_col_perm.end(), col_perm.begin());
+}

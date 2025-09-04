@@ -156,6 +156,28 @@ int main(int argc, char* argv[]) {
 
         for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[go_row_perm[i]];
         for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[go_col_perm[i]];
+    } else if (order_id_int == 6) {
+        std::vector<size_t> is_row_perm(A.rows), is_col_perm(A.cols), hs_row_perm(A.rows), hs_col_perm(A.cols);
+        auto order_start = std::chrono::high_resolution_clock::now();
+        independent_set_order(A, is_row_perm, is_col_perm, debug_mode);
+        auto order_end = std::chrono::high_resolution_clock::now();
+        auto order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(order_end - order_start).count();
+        
+        std::cout << "Independent Set Ordering took " << order_dur << " ms" << std::endl;
+
+        A_perm = permute(A, is_row_perm, is_col_perm);
+        std::cout << "Intermediate diagonal count after GOrder: " << count_nonempty_hs_diagonals(A_perm) << std::endl;
+
+        // auto hs_order_start = std::chrono::high_resolution_clock::now();
+        // hsorder_long(A_perm, hs_row_perm, hs_col_perm, 500, debug_mode);
+        // auto hs_order_end = std::chrono::high_resolution_clock::now();
+        // auto hs_order_dur = std::chrono::duration_cast<std::chrono::milliseconds>(hs_order_end - hs_order_start).count();
+        
+        // std::cout << "HS Ordering took " << hs_order_dur << " ms" << std::endl;
+        // A_perm = permute(A_perm, hs_row_perm, hs_col_perm);
+
+        // for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[is_row_perm[i]];
+        // for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[is_col_perm[i]];
     }
 
     std::cout << "Result Matrix: Rows: " << A_perm.rows << ", Cols: " << A_perm.cols << ", Non-zeros: " << A_perm.values.size() << std::endl;
