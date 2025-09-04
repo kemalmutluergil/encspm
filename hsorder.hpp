@@ -872,23 +872,36 @@ void independent_set_order(const CSRMatrix& A, std::vector<size_t>& row_perm, st
     
     std::set<size_t> occupied_diagonal_indices, fixed_cols;
 
-    for (int i = 0; i < num_nnz; i++) {
-        size_t new_pos = i * stride;
-        size_t old_pos = A.col_idx[A.row_ptr[old_row_index] + i];
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dist(0, A.rows - 1);
 
-        std::swap(current_col_perm[new_pos], current_col_perm[old_pos]);
-        occupied_diagonal_indices.insert(i * stride);
-        fixed_cols.insert(new_pos);
-    }
+    // while (occupied_diagonal_indices.size() < num_nnz) {
+    //     occupied_diagonal_indices.insert(dist(gen));
+    // }
+
+    // std::cout << "Random diagonals (" << num_nnz << "): ";
+    // for (auto d : occupied_diagonal_indices) {
+    //     std::cout << d << " ";
+    // }
+    // std::cout << std::endl;
+    occupied_diagonal_indices = {0, 9, 16, 50, 85};
 
     size_t iter_without_move = 0;
     bool made_a_move = true;
-    for (current_row = 1; current_row < A.rows && made_a_move; current_row++) {
+    for (current_row = 0; current_row < A.rows && made_a_move; current_row++) {
         old_row_index = row_indices[current_row];
+        made_a_move = false;
+        
+        //TODO: adding this introduced a bug, we stop at row 2 with 6 diags always.
+        num_nnz = A.row_ptr[old_row_index+1] - A.row_ptr[old_row_index];
+        std::vector<size_t> old_col_idxes(num_nnz);
 
-        for (size_t k = A.row_ptr[old_row_index]; k < A.row_ptr[old_row_index+1]; k++) {
-            size_t col_idx = current_col_perm[A.col_idx[k]];
-            made_a_move = false;
+        for (size_t k = A.row_ptr[old_row_index]; k < A.row_ptr[old_row_index+1]; k++) old_col_idxes[k] = A.col_idx[k]; 
+        std::shuffle(old_col_idxes.begin(), old_col_idxes.end(), gen);
+
+        for (size_t k = 0; k < num_nnz; k++) {
+            size_t col_idx = current_col_perm[old_col_idxes[k]];
 
             if (fixed_cols.find(col_idx) != fixed_cols.end()) {
                 occupied_diagonal_indices.insert((col_idx + A.rows - current_row) % A.rows);
