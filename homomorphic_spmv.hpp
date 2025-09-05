@@ -12,6 +12,12 @@ struct chunk_kemal {
     size_t index;
 };
 
+/**
+ * @brief Return chunks holding the HS diagonals of the matrix
+ * 
+ * @param a 
+ * @return vector<chunk_kemal> 
+ */
 vector<chunk_kemal> chunkify_csr(const CSRMatrix& a) {
     vector<chunk_kemal> chunks(a.rows);
     for (size_t i = 0; i < a.rows; i++) {
@@ -38,11 +44,27 @@ vector<chunk_kemal> chunkify_csr(const CSRMatrix& a) {
     return chunks;
 }
 
+/**
+ * @brief Homomorphic multiplication of the chunks of a matrix with the @p x_plain vector.
+ * 
+ * @param chunks The diagonals of the matrix
+ * @param x_plain 
+ * @param slot_count 
+ * @param encryptor 
+ * @param evaluator 
+ * @param encoder 
+ * @param gal_keys 
+ * @param scale 
+ * @param decryptor 
+ * @return vector<Ciphertext> 
+ */
 vector<Ciphertext> hs_chunks_mult(const vector<chunk_kemal>& chunks, vector<double> x_plain,
                                     size_t slot_count, Encryptor& encryptor, Evaluator& evaluator,
                                     CKKSEncoder& encoder, GaloisKeys& gal_keys, double scale, Decryptor& decryptor) {
     if (chunks.size() == 0) return vector<Ciphertext>();
     if (chunks[0].values.size() > slot_count) {
+        // The diagonals are larger than ciphertexts, we need to divide the diagonals to multiple ciphertexts
+
         size_t num_ct_per_chunk = (chunks[0].values.size() + slot_count - 1) / slot_count;
 
         vector<Ciphertext> res;
@@ -68,6 +90,8 @@ vector<Ciphertext> hs_chunks_mult(const vector<chunk_kemal>& chunks, vector<doub
         }
         return res;
     } else if (chunks[0].values.size() <= slot_count / 2) {
+        // Multiple digonals are packed into a single ciphertext
+
         size_t pack_num = slot_count / chunks[0].values.size();
         size_t largest_pow2 = 1;
         while (largest_pow2 * 2 < pack_num) {
@@ -107,6 +131,8 @@ vector<Ciphertext> hs_chunks_mult(const vector<chunk_kemal>& chunks, vector<doub
         }
         return ct_packed_chunks;
     } else {
+        // Exactly one diagonal is put into a ciphertext with possible padding.
+
         vector<Ciphertext> ct_chunks(chunks.size());
         vector<Plaintext> pt_chunks(chunks.size());
 

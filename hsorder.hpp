@@ -19,6 +19,15 @@ using namespace std;
 #endif
 #include <assert.h>
 
+
+/**
+ * @brief Updates a given permutation to take into effect moving a row/col to the
+ * given index and displacing all rows/cols in between
+ * 
+ * @param perm  A vector of permutation (old->new)
+ * @param row_to_move   index of the row/col to move
+ * @param new_pos   index of the destination
+ */
 void update_perm_by_move(std::vector<size_t>& perm, size_t row_to_move, size_t new_pos) {
     if (row_to_move < new_pos) {
         for (size_t i = 0; i < perm.size(); i++) {
@@ -34,6 +43,17 @@ void update_perm_by_move(std::vector<size_t>& perm, size_t row_to_move, size_t n
     }
 }
 
+/**
+ * @brief Helper function for search algorithms to update variables accordingly.
+ * Moving a row to desired place
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm  vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param best_move_row the index of the row to move
+ * @param best_move_new_pos the index of the destination
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ */
 void execute_move_row(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
                       size_t best_move_row, size_t best_move_new_pos, unsigned int* num_nnz) {
     std::vector<size_t> inv_row_perm(A.rows);
@@ -82,6 +102,17 @@ void execute_move_row(const CSRMatrix& A, std::vector<size_t>& current_row_perm,
     update_perm_by_move(current_row_perm, best_move_row, best_move_new_pos);
 }
 
+/**
+ * @brief Helper function for search algorithms to update variables accordingly.
+ * Moving a col to desired place.
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm  vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param best_move_col the index of the row to move
+ * @param best_move_new_pos the index of the destination
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ */
 void execute_move_col(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
                       size_t best_move_col, size_t best_move_new_pos, unsigned int* num_nnz) {
     if (best_move_col > best_move_new_pos) {
@@ -133,6 +164,17 @@ void execute_move_col(const CSRMatrix& A, std::vector<size_t>& current_row_perm,
     update_perm_by_move(current_col_perm, best_move_col, best_move_new_pos);
 }
 
+/**
+ * @brief Helper function for search algorithms to update variables accordingly.
+ * Swap two rows
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm  vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param best_move_row0 the index of the row to swap
+ * @param best_move_row1 the index of the other row to swap
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ */
 void execute_row_swap(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
                       size_t best_move_row0, size_t best_move_row1, unsigned int* num_nnz) {
     size_t idx_0, idx_1;
@@ -152,6 +194,17 @@ void execute_row_swap(const CSRMatrix& A, std::vector<size_t>& current_row_perm,
     }
 }
 
+/**
+ * @brief Helper function for search algorithms to update variables accordingly.
+ * Swap two cols
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm  vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param best_move_col0 the index of the col to swap
+ * @param best_move_col1 the index of the other col to swap
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ */
 void execute_col_swap(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm, 
                       size_t best_move_col0, size_t best_move_col1, unsigned int* num_nnz) {
     size_t idx_0, idx_1;
@@ -178,6 +231,17 @@ void execute_col_swap(const CSRMatrix& A, std::vector<size_t>& current_row_perm,
     }
 }
 
+/**
+ * @brief Computes the potential gain of exeucting col0 <-> col1
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ * @param col0 the index of the col to swap
+ * @param col1 the index of the other col to swap
+ * @return int - The potential gain
+ */
 int compute_gain_col_swap(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
                           unsigned int* num_nnz, size_t col0, size_t col1) {
     int leave_gains = 0;
@@ -215,6 +279,17 @@ int compute_gain_col_swap(const CSRMatrix& A, const std::vector<size_t>& current
     return leave_gains - arrival_losses;
 }
 
+/**
+ * @brief Computes the potential gain of exeucting row0 <-> row1
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ * @param row0 the index of the row to swap
+ * @param row1 the index of the other row to swap
+ * @return int - The potential gain
+ */
 int compute_gain_row_swap(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
                           unsigned int* num_nnz, size_t row0, size_t row1) {
     // LeaveGain_i := 1 if we make an HS diagonal fully vacant when row_i is removed from its place
@@ -248,6 +323,17 @@ int compute_gain_row_swap(const CSRMatrix& A, const std::vector<size_t>& current
     return leave_gains - arrival_losses;
 }
 
+/**
+ * @brief Computes the potential gain of exeucting col -> new_pos
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ * @param col the index of the col to move
+ * @param new_pos the index of the destination
+ * @return int - The potential gain
+ */
 int compute_gain_displace_col(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
                                unsigned int* num_nnz, size_t col, size_t new_pos) {
     int gain = 0;
@@ -316,6 +402,17 @@ int compute_gain_displace_col(const CSRMatrix& A, const std::vector<size_t>& cur
     return gain - loss;
 }
 
+/**
+ * @brief Computes the potential gain of exeucting row -> new_pos
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ * @param row the index of the row to move
+ * @param new_pos the index of the destination
+ * @return int - The potential gain
+ */
 int compute_gain_displace_row(const CSRMatrix& A, const std::vector<size_t>& current_row_perm, const std::vector<size_t>& current_col_perm, 
                                unsigned int* num_nnz, size_t row, size_t new_pos) {
     int gain = 0;
@@ -379,6 +476,18 @@ int compute_gain_displace_row(const CSRMatrix& A, const std::vector<size_t>& cur
     return gain - loss;
 }
 
+/**
+ * @brief Searches for the best possible displace move (row -> pos) or (col -> pos) and executes it on the current permutation of A
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ * @param[out] best_move_gain the gain of the best move which is executed
+ * @param current_diagonal_count the diag count of the current permutation
+ * @param steps_without_gain used to backtrack after certain number of moves
+ * @param row_turn bool to denote turn
+ */
 void find_and_execute_displace_move(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm,
                                 unsigned int* num_nnz, int& best_move_gain, unsigned int& current_diagonal_count, 
                                 unsigned int& steps_without_gain, bool &row_turn) {
@@ -449,6 +558,18 @@ void find_and_execute_displace_move(const CSRMatrix& A, std::vector<size_t>& cur
     
 }
 
+/**
+ * @brief Searches for the best possible swap move (row0 <-> row1) or (col0 <-> col1) and executes it on the current permutation of A
+ * 
+ * @param A Our CSRMatrix object
+ * @param current_row_perm vector of the row permutation (old->new) 
+ * @param current_col_perm vector of the col permutation (old->new)
+ * @param num_nnz array holding the number of nonzeros in each HS diagonal
+ * @param[out] best_move_gain the gain of the best move which is executed
+ * @param current_diagonal_count the diag count of the current permutation
+ * @param steps_without_gain used to backtrack after certain number of moves
+ * @param row_turn bool to denote turn
+ */
 void find_and_execute_swap_move(const CSRMatrix& A, std::vector<size_t>& current_row_perm, std::vector<size_t>& current_col_perm,
                                 unsigned int* num_nnz, int& best_move_gain, unsigned int& current_diagonal_count, 
                                 unsigned int& steps_without_gain, bool &row_turn) {
@@ -517,6 +638,17 @@ void find_and_execute_swap_move(const CSRMatrix& A, std::vector<size_t>& current
     }
 }
 
+/**
+ * @brief Perform a search over the permutation space of A to place nonzeros on HS diagonals.
+ * 
+ * @param A CSRMatrix object
+ * @param[out] row_perm result row permutation
+ * @param[out] col_perm result col permutation
+ * 
+ * Alternatingly swap or displace rows and columns to fit nonzeros on HS diagonals. Search algorithm is greedy to 
+ * always choose the best possible move. If it gets stuck in a local minimum, it allows negative moves and backtracks after
+ * @p max_steps_without_gain moves are made.
+ */
 void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm) {
     // number of nonzeros in each HS diagonal
     unsigned int num_nnz[A.rows] = {0};
@@ -632,6 +764,21 @@ bool kbhit() {
 }
 #endif
 
+/**
+ * @brief Exhaustive search algorithm for fitting nonzeros on HS diagonals.
+ * 
+ * @param A CSRMatrix object
+ * @param[out] row_perm result row permutation
+ * @param[out] col_perm result col permutation
+ * @param window_size 
+ * @param debug_mode print debug info if set to true
+ * 
+ * At each step, pick a random row/col, do the best move available for that choice (swap or move) and execute it. Then move to
+ * the next row/col. Rows/cols already swapped or displaced are not touched again. When all rows and cols are visited, this is 1 pass.
+ * Do passes over the matrix until we are stuck. Visit orders in each pass are random.
+ * 
+ * Returns the current best permutation if a key is pressed abruptly.
+ */
 void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm, size_t window_size, bool debug_mode) {
     std::random_device rd;   // seed
     std::mt19937 g(rd()); 
@@ -669,6 +816,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
     size_t negative_passes = 0;
     const size_t backtracking_threshold = 50;
 
+    // When a row or col is affected by a move, mark it to not move it again.
     std::vector<bool> is_row_placed(A.rows, false), is_col_placed(A.cols, false);
 
     while (passes_without_improvement < max_passes_without_improvement) {
@@ -690,11 +838,13 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
                 size_t best_move_row1;
                 bool is_best_swap = true;
                 
+                // choose random rows and columns for the window
                 std::vector<size_t> trial_window(A.rows);
                 for (size_t j = 0; j < A.rows; j++) trial_window[j] = j;
                 std::shuffle(trial_window.begin(), trial_window.end(), g);
                 trial_window.resize(window_size);
                 
+                // Find the best row move
                 for (size_t w_i = 0; w_i < window_size; w_i++) {
                     if (trial_window[w_i] == row0) continue;
                     int swap_move_gain = INT_MIN, displace_move_gain = INT_MIN;
@@ -720,6 +870,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
                     }
                 }
 
+                // Execute the best row move
                 if (best_move_gain == INT_MIN) continue;
                 else if (best_move_gain < 0 && !allow_negative) continue;
                 else {
@@ -755,6 +906,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
                 std::shuffle(trial_window.begin(), trial_window.end(), g);
                 trial_window.resize(window_size);
                 
+                // find the best col move
                 for (size_t w_i = 0; w_i < window_size; w_i++) {
                     if (trial_window[w_i] == col0) continue;
                     int swap_move_gain = INT_MIN, displace_move_gain = INT_MIN;
@@ -780,6 +932,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
                     }
                 }
 
+                // execute the best col move
                 if (best_move_gain == INT_MIN) continue;
                 else if (best_move_gain < 0 && !allow_negative) continue;
                 else {

@@ -87,6 +87,8 @@ int main(int argc, char* argv[]) {
         A_perm = A;
 
     } if(order_id_int == 1) {   
+        // RCM Order
+
         auto order_start = std::chrono::high_resolution_clock::now();
         rcm::find_rcm_ordering(A, best_row_perm, best_col_perm);     
         auto order_end = std::chrono::high_resolution_clock::now();
@@ -95,6 +97,8 @@ int main(int argc, char* argv[]) {
         std::cout << "RCM Ordering took " << order_dur << " ms" << std::endl;
         A_perm = permute(A, best_row_perm, best_col_perm);
     } else if (order_id_int == 2) {
+        // GOrder
+
         int window_size = atoi(argv[argc - 1]);
         auto order_start = std::chrono::high_resolution_clock::now();
         gorder(A, best_row_perm, best_col_perm, window_size);
@@ -104,6 +108,9 @@ int main(int argc, char* argv[]) {
         std::cout << "GOrder took " << order_dur << " ms" << std::endl;
         A_perm = permute(A, best_row_perm, best_col_perm);
     }  else if (order_id_int == 3) {
+        // HSOrder
+
+
         auto order_start = std::chrono::high_resolution_clock::now();
         hsorder_long(A, best_row_perm, best_col_perm, 500, debug_mode);
         auto order_end = std::chrono::high_resolution_clock::now();
@@ -112,6 +119,8 @@ int main(int argc, char* argv[]) {
         std::cout << "HS Ordering took " << order_dur << " ms" << std::endl;
         A_perm = permute(A, best_row_perm, best_col_perm);
     } else if (order_id_int == 4) {
+        // RCM then HSOrder
+
         std::vector<size_t> hs_row_perm(A.rows), rcm_row_perm(A.rows), hs_col_perm(A.cols), rcm_col_perm(A.cols);
 
         auto rcm_order_start = std::chrono::high_resolution_clock::now();
@@ -134,6 +143,8 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[rcm_row_perm[i]];
         for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[rcm_col_perm[i]];
     } else if (order_id_int == 5) {
+        // GOrder then HSOrder
+
         int window_size = atoi(argv[argc - 1]);
         std::vector<size_t> hs_row_perm(A.rows), go_row_perm(A.rows), hs_col_perm(A.cols), go_col_perm(A.cols);
 
@@ -157,6 +168,8 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < A.rows; i++) best_row_perm[i] = hs_row_perm[go_row_perm[i]];
         for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = hs_col_perm[go_col_perm[i]];
     } else if (order_id_int == 6) {
+        // Independent Set Ordering
+
         std::vector<size_t> is_row_perm(A.rows), is_col_perm(A.cols), hs_row_perm(A.rows), hs_col_perm(A.cols);
         auto order_start = std::chrono::high_resolution_clock::now();
         independent_set_order(A, is_row_perm, is_col_perm, debug_mode);
