@@ -17,6 +17,7 @@ using namespace std;
 #include <unistd.h>
 #include <fcntl.h>
 #endif
+#include <assert.h>
 
 void update_perm_by_move(std::vector<size_t>& perm, size_t row_to_move, size_t new_pos) {
     if (row_to_move < new_pos) {
@@ -876,31 +877,22 @@ void independent_set_order(const CSRMatrix& A, std::vector<size_t>& row_perm, st
     std::mt19937 gen(rd());
     std::uniform_int_distribution<size_t> dist(0, A.rows - 1);
 
-    // while (occupied_diagonal_indices.size() < num_nnz) {
-    //     occupied_diagonal_indices.insert(dist(gen));
-    // }
+    while (occupied_diagonal_indices.size() < num_nnz) {
+        occupied_diagonal_indices.insert(dist(gen));
+    }
 
-    // std::cout << "Random diagonals (" << num_nnz << "): ";
-    // for (auto d : occupied_diagonal_indices) {
-    //     std::cout << d << " ";
-    // }
-    // std::cout << std::endl;
-    occupied_diagonal_indices = {0, 9, 16, 50, 85};
-
-    size_t iter_without_move = 0;
     bool made_a_move = true;
     for (current_row = 0; current_row < A.rows && made_a_move; current_row++) {
         old_row_index = row_indices[current_row];
         made_a_move = false;
         
-        //TODO: adding this introduced a bug, we stop at row 2 with 6 diags always.
         num_nnz = A.row_ptr[old_row_index+1] - A.row_ptr[old_row_index];
         std::vector<size_t> old_col_idxes(num_nnz);
 
-        for (size_t k = A.row_ptr[old_row_index]; k < A.row_ptr[old_row_index+1]; k++) old_col_idxes[k] = A.col_idx[k]; 
+        for (size_t k = A.row_ptr[old_row_index], j = 0; k < A.row_ptr[old_row_index+1]; k++, j++) old_col_idxes[j] = A.col_idx[k]; 
         std::shuffle(old_col_idxes.begin(), old_col_idxes.end(), gen);
 
-        for (size_t k = 0; k < num_nnz; k++) {
+        for (size_t k = 0; k < old_col_idxes.size(); k++) {
             size_t col_idx = current_col_perm[old_col_idxes[k]];
 
             if (fixed_cols.find(col_idx) != fixed_cols.end()) {
@@ -933,8 +925,6 @@ void independent_set_order(const CSRMatrix& A, std::vector<size_t>& row_perm, st
                 }
             }
         }
-        if (!made_a_move) iter_without_move++;
-        else iter_without_move = 0;
     }
 
     std::cout << "Stopped at row " << current_row << " with " << occupied_diagonal_indices.size() << " diagonals" << std::endl;
