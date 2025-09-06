@@ -9,14 +9,6 @@ using namespace std;
 #include "csr.hpp"
 #include "utils.hpp"
 #include <climits>
-
-#ifdef _WIN32
-#include <conio.h>  // for _kbhit() and _getch()
-#else
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
-#endif
 #include <assert.h>
 
 
@@ -667,10 +659,9 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
     for (size_t i = 0; i < A.rows; i++) current_row_perm[i] = i;
     for (size_t i = 0; i < A.cols; i++) current_col_perm[i] = i;
 
-    const unsigned int max_steps_without_improvement = 10000;
-    const unsigned int max_steps_without_gain = max_steps_without_improvement / 5;
-    
-    // TODO: use this for some sort of backtracking
+    const unsigned int max_steps_without_improvement = 100000 * ((A.rows + 255) / 256);
+    const unsigned int max_steps_without_gain = max_steps_without_improvement / 1000;
+
     unsigned int steps_without_gain = 0;
     unsigned int steps_without_improvement = 0;
 
@@ -683,6 +674,9 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
     // 1 -> move
     int move_type = 0;
     bool row_turn = true;
+
+    std::mt19937 gen(std::random_device{}());          
+    std::uniform_int_distribution<int> dist01(0, 1);
     while (steps_without_improvement < max_steps_without_improvement) {
         int best_move_gain = INT_MIN;
         
@@ -694,7 +688,6 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
             break;
         }
         
-        move_type = (move_type + 1) % 2;
         if (current_diagonal_count < best_diagonal_count) {
             best_diagonal_count = current_diagonal_count;
             std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
@@ -727,42 +720,27 @@ void hsorder(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size
         // }
         // std::cout << std::endl;
 
-        row_turn = !row_turn;
+        move_type = dist01(gen);        // random 0 or 1
+        row_turn  = static_cast<bool>(dist01(gen)); // random true or false
+
+        #ifdef _WIN32
+            if (_kbhit()) {
+                stop_requested.store(true);
+                break;
+            }
+        #else
+            if (kbhit()) {
+                stop_requested.store(true);
+                break;
+            }
+        #endif
+        
     }
     std::cout << "HSOrder complete. Active diagonals: " << best_diagonal_count << "/" << A.rows << std::endl;
     
     std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
     std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
 }
-
-std::atomic<bool> stop_requested(false);
-
-#ifdef __linux__
-// Function to check if a key has been pressed (non-blocking)
-bool kbhit() {
-    struct termios oldt, newt;
-    int ch;
-    int oldf;
-
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
-    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
-
-    ch = getchar();
-
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    fcntl(STDIN_FILENO, F_SETFL, oldf);
-
-    if(ch != EOF){
-        ungetc(ch, stdin);
-        return true;
-    }
-    return false;
-}
-#endif
 
 /**
  * @brief Exhaustive search algorithm for fitting nonzeros on HS diagonals.
@@ -775,7 +753,8 @@ bool kbhit() {
  * 
  * At each step, pick a random row/col, do the best move available for that choice (swap or move) and execute it. Then move to
  * the next row/col. Rows/cols already swapped or displaced are not touched again. When all rows and cols are visited, this is 1 pass.
- * Do passes over the matrix until we are stuck. Visit orders in each pass are random.
+ * Do passes over the matrix until we are stuck. Row visit orders in each pass are random, column visit order is from least
+ * populated to the most dense.
  * 
  * Returns the current best permutation if a key is pressed abruptly.
  */
@@ -806,7 +785,7 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
     bool allow_negative = false;
     
     size_t passes_without_improvement = 0;
-    const size_t max_passes_without_improvement = 100 * ((A.rows + 255 )/ 256);
+    const size_t max_passes_without_improvement = 1000 * ((A.rows + 255 )/ 256);
 
     std::vector<size_t> best_row_perm(A.rows), best_col_perm(A.cols);
 
@@ -814,20 +793,38 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
     for (size_t i = 0; i < A.cols; i++) best_col_perm[i] = i;
 
     size_t negative_passes = 0;
-    const size_t backtracking_threshold = 50;
+    const size_t backtracking_threshold = 100;
 
     // When a row or col is affected by a move, mark it to not move it again.
     std::vector<bool> is_row_placed(A.rows, false), is_col_placed(A.cols, false);
+
+    std::vector<size_t> random_col_visit_order(A.cols), num_nnz_cols(A.cols, 0);
+    for (size_t row = 0; row < A.rows; row++) {
+        for (size_t k = A.row_ptr[row]; k < A.row_ptr[row+1]; k++) {
+            num_nnz_cols[A.col_idx[k]]++;
+        }
+    }
+
+    std::iota(random_col_visit_order.begin(),
+          random_col_visit_order.end(),
+          0);
+
+    // sort indices based on num_nnz_cols values (descending)
+    std::sort(random_col_visit_order.begin(),
+        random_col_visit_order.end(),
+        [&](size_t i, size_t j) {
+            return num_nnz_cols[i] < num_nnz_cols[j];
+        });
 
     while (passes_without_improvement < max_passes_without_improvement) {
         for (size_t i = 0; i < A.rows; i++) is_row_placed[i] = false;
         for (size_t i = 0; i < A.cols; i++) is_col_placed[i] = false;
 
-        std::vector<size_t> random_row_visit_order(A.rows), random_col_visit_order(A.cols);
+        std::vector<size_t> random_row_visit_order(A.rows);
         int pass_gain = 0;
     
         std::shuffle(random_row_visit_order.begin(), random_row_visit_order.end(), g);
-        std::shuffle(random_col_visit_order.begin(), random_col_visit_order.end(), g);
+        // std::shuffle(random_col_visit_order.begin(), random_col_visit_order.end(), g);
 
         for (size_t i = 0; i < A.rows; i++) {
             size_t row0 = random_row_visit_order[i];
@@ -1001,88 +998,122 @@ void hsorder_long(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector
     std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
 }
 
-void independent_set_order(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm, bool debug_mode) {
-    // order rows based on crowdedness
-    vector<size_t> row_indices(A.rows);
-    for (size_t i = 0; i < A.rows; ++i) row_indices[i] = i;
+void independent_set_order(const CSRMatrix& A, std::vector<size_t>& row_perm, std::vector<size_t>& col_perm, bool debug_mode) {    
+    std::vector<size_t> current_row_perm(A.rows), current_col_perm(A.cols);
+    for (size_t i = 0; i < A.rows; i++) current_row_perm[i] = i;
+    for (size_t i = 0; i < A.rows; i++) current_col_perm[i] = i;
+
+    std::vector<size_t> best_row_perm(current_row_perm), best_col_perm(current_col_perm);
+    size_t best_diagonal_count = INT_MAX;
 
     // Sort by nnz descending
-    sort(row_indices.begin(), row_indices.end(),
+    sort(current_row_perm.begin(), current_row_perm.end(),
         [&A](size_t a, size_t b) {
             size_t nnz_a = A.row_ptr[a+1] - A.row_ptr[a];
             size_t nnz_b = A.row_ptr[b+1] - A.row_ptr[b];
-            return nnz_a > nnz_b;  // descending
+            return nnz_a < nnz_b;
         });
-    
-    std::vector<size_t> current_row_perm(A.rows), current_col_perm(A.cols);
-    for (size_t i = 0; i < A.rows; i++) current_row_perm[row_indices[i]] = i;
-    for (size_t i = 0; i < A.rows; i++) current_col_perm[i] = i;
-
-    size_t current_row = 0; 
-    size_t old_row_index = row_indices[current_row];
-
-    size_t num_nnz = A.row_ptr[old_row_index+1] - A.row_ptr[old_row_index];
-    size_t stride = (A.cols + num_nnz) / num_nnz;
-    
-    std::set<size_t> occupied_diagonal_indices, fixed_cols;
 
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<size_t> dist(0, A.rows - 1);
+    
+    size_t trial_num = 0;
+    const size_t max_trials_without_impr = 1000000 * ((A.rows + 255) / 256);
 
-    while (occupied_diagonal_indices.size() < num_nnz) {
-        occupied_diagonal_indices.insert(dist(gen));
-    }
+    while (trial_num < max_trials_without_impr) {
+        std::shuffle(current_row_perm.begin() + 1, current_row_perm.end(), gen);
+        std::set<size_t> occupied_diagonal_indices, fixed_cols;
 
-    bool made_a_move = true;
-    for (current_row = 0; current_row < A.rows && made_a_move; current_row++) {
-        old_row_index = row_indices[current_row];
-        made_a_move = false;
-        
-        num_nnz = A.row_ptr[old_row_index+1] - A.row_ptr[old_row_index];
-        std::vector<size_t> old_col_idxes(num_nnz);
+        std::vector<size_t> inv_row_perm(A.rows);
+        for (size_t i = 0; i < A.rows; i++) inv_row_perm[current_row_perm[i]] = i;
+        size_t num_nnz = A.row_ptr[inv_row_perm[0]+1] - A.row_ptr[inv_row_perm[0]];
 
-        for (size_t k = A.row_ptr[old_row_index], j = 0; k < A.row_ptr[old_row_index+1]; k++, j++) old_col_idxes[j] = A.col_idx[k]; 
-        std::shuffle(old_col_idxes.begin(), old_col_idxes.end(), gen);
+        while (occupied_diagonal_indices.size() < num_nnz) {
+            occupied_diagonal_indices.insert(dist(gen));
+        }
 
-        for (size_t k = 0; k < old_col_idxes.size(); k++) {
-            size_t col_idx = current_col_perm[old_col_idxes[k]];
+        bool made_a_move = true;
+        size_t current_row = 0;
+        for (current_row = 0; current_row < A.rows && made_a_move; current_row++) {
+            size_t old_row_index = inv_row_perm[current_row];
+            made_a_move = false;
+            
+            num_nnz = A.row_ptr[old_row_index+1] - A.row_ptr[old_row_index];
+            std::vector<size_t> old_col_idxes(num_nnz);
 
-            if (fixed_cols.find(col_idx) != fixed_cols.end()) {
-                occupied_diagonal_indices.insert((col_idx + A.rows - current_row) % A.rows);
-            } else {
-                bool moved_nnz = false;
-                for (size_t diag_to_place: occupied_diagonal_indices) {
-                    size_t new_pos = (current_row + diag_to_place) % A.rows;
-                    if (fixed_cols.find(new_pos) != fixed_cols.end()) continue;
-                    if (new_pos == col_idx) {
-                        fixed_cols.insert(col_idx);
-                        made_a_move = true;
-                        moved_nnz = true;
-                        break;
-                    } else {
-                        size_t idx0, idx1;
-                        for (size_t i = 0; i < A.cols; i++) {
-                            if (current_col_perm[i] == col_idx) idx0 = i;
-                            else if (current_col_perm[i] == new_pos) idx1 = i;
-                        }
-                        std::swap(current_col_perm[idx0], current_col_perm[idx1]);
-                        fixed_cols.insert(new_pos);
-                        made_a_move = true;
-                        moved_nnz = true;
-                        break;
-                    }
-                }
-                if (!moved_nnz) {
+            for (size_t k = A.row_ptr[old_row_index], j = 0; k < A.row_ptr[old_row_index+1]; k++, j++) old_col_idxes[j] = A.col_idx[k]; 
+            std::shuffle(old_col_idxes.begin(), old_col_idxes.end(), gen);
+
+            for (size_t k = 0; k < old_col_idxes.size(); k++) {
+                size_t col_idx = current_col_perm[old_col_idxes[k]];
+
+                if (fixed_cols.find(col_idx) != fixed_cols.end()) {
                     occupied_diagonal_indices.insert((col_idx + A.rows - current_row) % A.rows);
+                } else {
+                    bool moved_nnz = false;
+                    for (size_t diag_to_place: occupied_diagonal_indices) {
+                        size_t new_pos = (current_row + diag_to_place) % A.rows;
+                        if (fixed_cols.find(new_pos) != fixed_cols.end()) continue;
+                        if (new_pos == col_idx) {
+                            fixed_cols.insert(col_idx);
+                            made_a_move = true;
+                            moved_nnz = true;
+                            break;
+                        } else {
+                            size_t idx0, idx1;
+                            for (size_t i = 0; i < A.cols; i++) {
+                                if (current_col_perm[i] == col_idx) idx0 = i;
+                                else if (current_col_perm[i] == new_pos) idx1 = i;
+                            }
+                            std::swap(current_col_perm[idx0], current_col_perm[idx1]);
+                            fixed_cols.insert(new_pos);
+                            made_a_move = true;
+                            moved_nnz = true;
+                            break;
+                        }
+                    }
+                    if (!moved_nnz) {
+                        occupied_diagonal_indices.insert((col_idx + A.rows - current_row) % A.rows);
+                    }
                 }
             }
         }
+
+        CSRMatrix A_perm = permute(A, current_row_perm, current_col_perm);
+        size_t current_diagonal_count = count_nonempty_hs_diagonals(A_perm);
+        
+        if (current_diagonal_count < best_diagonal_count) {
+            std::copy(current_row_perm.begin(), current_row_perm.end(), best_row_perm.begin());
+            std::copy(current_col_perm.begin(), current_col_perm.end(), best_col_perm.begin());
+            best_diagonal_count = current_diagonal_count;
+            trial_num = 0;
+        }
+
+        if (debug_mode && trial_num % 1000 == 0) std::cout << "Current best diagonal count: " << best_diagonal_count << std::endl;
+        trial_num++;
+
+        #ifdef _WIN32
+            if (_kbhit()) {
+                stop_requested.store(true);
+                break;
+            }
+        #else
+            if (kbhit()) {
+                stop_requested.store(true);
+                break;
+            }
+        #endif
     }
+    
+    std::cout << "ISOrder finished with " << best_diagonal_count << " diagonals\n";
 
-    std::cout << "Stopped at row " << current_row << " with " << occupied_diagonal_indices.size() << " diagonals" << std::endl;
+    std::cout << "Row perm: ";
+    for (auto p: best_row_perm) std::cout << p << " ";
+    std::cout << std::endl << "Col perm: ";
+    for (auto p: best_col_perm) std::cout << p << " ";
+    std::cout << std::endl;
 
-       
-    std::copy(current_row_perm.begin(), current_row_perm.end(), row_perm.begin());
-    std::copy(current_col_perm.begin(), current_col_perm.end(), col_perm.begin());
+    std::copy(best_row_perm.begin(), best_row_perm.end(), row_perm.begin());
+    std::copy(best_col_perm.begin(), best_col_perm.end(), col_perm.begin());
 }

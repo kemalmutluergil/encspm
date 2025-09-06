@@ -6,6 +6,7 @@ import io
 from tabulate import tabulate
 
 PROG_PATH = "./build/main_snap"
+ORDERS_WITH_TIMEOUT = [3, 4, 5, 6, 7]
 
 def find_limited_files_per_topdir(root_dir, limit):
     """
@@ -86,6 +87,7 @@ COLUMNS = [
     "gorderhs_w10_final_diag", "gorderhs_w10_time",
     "gorderhs_w50_final_diag", "gorderhs_w50_time",
     "gorderhs_w100_final_diag", "gorderhs_w100_time",
+    "hsbf_final_diag", "hsbf_time"
 ]
 
 def update_csv(csv_file, abs_file, order_id, window_size, parsed):
@@ -153,6 +155,11 @@ def update_csv(csv_file, abs_file, order_id, window_size, parsed):
         elif window_size == 50:
             df.loc[idx, "gorderhs_w50_final_diag"] = parsed.get("final_diagonal")
             df.loc[idx, "gorderhs_w50_time"] = parsed.get("time_gorder") + parsed.get("time_hs")
+    
+    elif order_id == 7:
+        df.loc[idx, "hsbf_final_diag"] = parsed.get("final_diagonal")
+        df.loc[idx, "hsbf_time"] = parsed.get("time_hsbf")
+
 
     # Save CSV back
     df.to_csv(csv_file, index=False)
@@ -211,7 +218,7 @@ def run_order_id(file, order_id, window_size, timeout=600):
     else:
         cmd = [PROG_PATH, file, str(order_id)]
         print(f"Running: {' '.join(cmd)}")
-        if order_id == 3 or 4:
+        if order_id in ORDERS_WITH_TIMEOUT:
             stdout = run_with_timeout(cmd, timeout=timeout)
         else:
             stdout = run_without_timeout(cmd)
@@ -230,6 +237,7 @@ def parse_output(stdout, order_id):
     time_rcm = None
     time_gorder = None
     time_hs = None
+    time_hsbf = None
 
     for line in stdout.splitlines():
         line = line.strip()
@@ -272,6 +280,10 @@ def parse_output(stdout, order_id):
         if m:
             time_hs = int(m.group(1))
 
+        m = re.search(r"HSBF Ordering took (\d+) ms", line)
+        if m:
+            time_hsbf = int(m.group(1))
+
     return {
         "initial_diagonal": initial_diag,
         "intermediate_diagonal": intermediate_diag,
@@ -279,6 +291,7 @@ def parse_output(stdout, order_id):
         "time_rcm": time_rcm,
         "time_gorder": time_gorder,
         "time_hs": time_hs,
+        "time_hsbf": time_hsbf
     }
 
 def run_main_on_file(file, csv_file, interrupt_timeout=600):
@@ -298,7 +311,7 @@ def run_main_on_file(file, csv_file, interrupt_timeout=600):
             else:
                 raise ValueError("Unexpected format in .mtx file header")
 
-    order_ids = [1, 2, 3, 4, 5]
+    order_ids = [1, 2, 3, 4, 5, 7]
     window_sizes = [10, 50, 100]
 
     for order_id in order_ids:
@@ -375,7 +388,9 @@ def write_table_to_file(filename, csv_file):
 
     print(f"Table written to {filename}")
 
-# write_table_to_file("results_table.txt", "results.csv")
+def run_one_ordering_on_dir(files, csv_file, order_id, w, interrupt_timeout=600):
+    for file in files:
+        run_one_ordering(file, csv_file, order_id, w, interrupt_timeout)
 
 if __name__ == "__main__":
     print("Choose action: ")
@@ -383,6 +398,7 @@ if __name__ == "__main__":
     print("    2- Run program on a matrix")
     print("    3- Run program on matrices in dir")
     print("    4- Run one ordering on a matrix")
+    print("    5- Run one ordering on matrices in a dir")
 
     action_choice = int(input("Choice: "))
 
@@ -410,8 +426,23 @@ if __name__ == "__main__":
             assert w in [10, 50, 100]
         else:
             w = 0
-        if order_id in [3, 4, 5]:
+        if order_id in ORDERS_WITH_TIMEOUT:
             timeout_duration = int(input("Enter timeout for HSOrder in sec: "))
         else:
             timeout_duration = 0
         run_one_ordering(mtx, csv_file, order_id, w, timeout_duration)
+    elif action_choice == 5:
+        dirname = input("Enter path to dir: ")
+        csv_file = input("Enter path to csv file: ")
+        order_id = int(input("Enter order id: "))
+        if order_id in [2, 5]:
+            w = int(input("Enter window size (10, 50, 100): "))
+            assert w in [10, 50, 100]
+        else:
+            w = 0
+        if order_id in ORDERS_WITH_TIMEOUT:
+            timeout_duration = int(input("Enter timeout for HSOrder in sec: "))
+        else:
+            timeout_duration = 0
+        files = find_all_files_per_topdir(dirname)
+        run_one_ordering_on_dir(files, csv_file, order_id, w, timeout_duration)

@@ -2,6 +2,14 @@
 
 #include <map>
 
+#ifdef _WIN32
+#include <conio.h>  // for _kbhit() and _getch()
+#else
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
 static map<string, chrono::high_resolution_clock::time_point> __prof_start;
 static map<string, chrono::nanoseconds> __prof_durations;
 static map<string, size_t> __prof_counts;
@@ -143,3 +151,32 @@ static inline vector<double> slice_and_pad(const vector<double>& v,
 //          << "  Max absolute error  : " << max_abs_err << "\n"
 //          << "  Avg absolute error  : " << avg_abs_err << "\n";
 // }
+
+std::atomic<bool> stop_requested(false);
+
+#ifdef __linux__
+// Function to check if a key has been pressed (non-blocking)
+bool kbhit() {
+    struct termios oldt, newt;
+    int ch;
+    int oldf;
+
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    ch = getchar();
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    if(ch != EOF){
+        ungetc(ch, stdin);
+        return true;
+    }
+    return false;
+}
+#endif
